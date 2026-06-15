@@ -8,7 +8,7 @@ use p2panda_core::traits::ShortFormat;
 use p2panda_core::{Hash, Topic};
 use p2panda_net::iroh_endpoint::RelayUrl;
 use p2panda_net::sync::authoriser::SyncBlockList;
-use p2panda_net::{NetworkId, NodeId};
+use p2panda_net::{Endpoint, NetworkId, NodeId};
 use p2panda_spaces::manager::GLOBAL_GROUPS_CONTEXT_ID;
 use p2panda_spaces::{AuthGroupState, Config as SpacesConfig, GroupId, SpaceId, SpacesStoreState};
 use p2panda_store::groups::GroupsStore;
@@ -699,6 +699,15 @@ impl Node {
     /// Returns the network identifier being used by the node.
     pub fn network_id(&self) -> NetworkId {
         self.network.network_id()
+    }
+
+    /// Returns a handle to the shared networking endpoint.
+    ///
+    /// This is the same endpoint used internally by the node for all peer-to-peer connections.
+    /// Call [`Endpoint::endpoint`] on the returned handle to access the underlying `iroh::Endpoint`,
+    /// or [`Endpoint::accept`] to register additional protocol handlers on it.
+    pub fn endpoint(&self) -> Endpoint {
+        self.network.endpoint.clone()
     }
 
     pub async fn me(&self) -> Result<Member, MemberError> {
