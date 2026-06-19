@@ -382,11 +382,17 @@ impl Drop for TransactionPermit {
         // If the permit was never used (due to an early return / error / etc.) we automatically
         // roll-back the transaction.
         if !self.committed {
-            let permit = self.permit.clone();
-            let tx = self.tx.clone();
+            // Take the transaction out of the shared slot *synchronously*. The
+            // rollback task spawned below can be dropped before it runs (runtime
+            // teardown, future cancellation); if it is, the slot must already be
+            // empty or the next `begin()` aborts the whole process on its
+            // `tx_ref.is_none()` assertion. We hold the permit, so no other task
+            // contends this lock and `try_lock` succeeds.
+            let tx = self.tx.try_lock().ok().and_then(|mut slot| slot.take());
 
+            let permit = self.permit.clone();
             tokio::spawn(async move {
-                if let Some(tx) = tx.lock().await.take() {
+                if let Some(tx) = tx {
                     let _ = tx.rollback().await;
                 }
 
