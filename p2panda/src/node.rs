@@ -4,6 +4,7 @@ use std::fmt::Debug;
 
 use futures_util::Stream;
 use p2panda_core::Topic;
+use p2panda_net::iroh_endpoint::EndpointAddr;
 use p2panda_net::iroh_endpoint::RelayUrl;
 use p2panda_net::{NetworkId, NodeId};
 use p2panda_store::sqlite::{SqliteError, SqliteStore, SqliteStoreBuilder};
@@ -385,6 +386,11 @@ impl Node {
         relay_url: RelayUrl,
     ) -> Result<(), NetworkError> {
         self.network.insert_bootstrap(node_id, relay_url).await
+    }
+
+    /// Inserts a node address into the local address book.
+    pub async fn insert_node_addr(&self, addr: EndpointAddr) -> Result<(), NetworkError> {
+        self.network.insert_node_addr(addr).await
     }
 }
 

@@ -118,6 +118,12 @@ impl Network {
         }
         Ok(())
     }
+
+    pub async fn insert_node_addr(&self, addr: EndpointAddr) -> Result<(), NetworkError> {
+        let node_info = NodeInfo::from(addr);
+        self.address_book.insert_node_info(node_info).await?;
+        Ok(())
+    }
 }
 
 /// mDNS discovery mode.
