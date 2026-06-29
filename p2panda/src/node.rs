@@ -5,7 +5,7 @@ use std::sync::Mutex;
 
 use futures_util::Stream;
 use p2panda_core::Topic;
-use p2panda_net::iroh_endpoint::RelayUrl;
+use p2panda_net::iroh_endpoint::{EndpointAddr, RelayUrl};
 use p2panda_net::sync::authoriser::SyncBlockList;
 use p2panda_net::{Endpoint, NetworkId, NodeId};
 use p2panda_spaces::{Config as SpacesConfig, GroupId, SpaceId};
@@ -766,6 +766,43 @@ impl Node {
         relay_url: RelayUrl,
     ) -> Result<(), NetworkError> {
         self.network.insert_bootstrap(node_id, relay_url).await
+    }
+
+    /// Allows all sync sessions with the given node.
+    ///
+    /// The allowlist is not currently persisted. This means it will need to be repopulated by
+    /// calling this method after each process restart.
+    pub async fn allow(&self, node_id: NodeId) {
+        self.sync_block_list.allow(node_id).await;
+    }
+
+    /// Allows all sync sessions with the given node for a single topic.
+    ///
+    /// The allowlist is not currently persisted. This means it will need to be repopulated by
+    /// calling this method after each process restart.
+    pub async fn topic_allow(&self, node_id: NodeId, topic: Topic) {
+        self.sync_block_list.allow_topic(node_id, topic).await;
+    }
+
+    /// Blocks all sync sessions with the given node.
+    ///
+    /// The blocklist is not currently persisted. This means it will need to be repopulated by
+    /// calling this method after each process restart.
+    pub async fn block(&self, node_id: NodeId) {
+        self.sync_block_list.block(node_id).await;
+    }
+
+    /// Blocks all sync sessions with the given node for a single topic.
+    ///
+    /// The blocklist is not currently persisted. This means it will need to be repopulated by
+    /// calling this method after each process restart.
+    pub async fn topic_block(&self, node_id: NodeId, topic: Topic) {
+        self.sync_block_list.block_topic(node_id, topic).await;
+    }
+
+    /// Inserts a node address into the local address book.
+    pub async fn insert_node_addr(&self, addr: EndpointAddr) -> Result<(), NetworkError> {
+        self.network.insert_node_addr(addr).await
     }
 }
 
