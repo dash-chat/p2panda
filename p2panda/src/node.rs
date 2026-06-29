@@ -6,7 +6,7 @@ use std::sync::Mutex;
 use futures_util::Stream;
 use p2panda_core::traits::ShortFormat;
 use p2panda_core::{Hash, Topic};
-use p2panda_net::iroh_endpoint::RelayUrl;
+use p2panda_net::iroh_endpoint::{EndpointAddr, RelayUrl};
 use p2panda_net::sync::authoriser::SyncBlockList;
 use p2panda_net::{Endpoint, NetworkId, NodeId};
 use p2panda_spaces::manager::GLOBAL_GROUPS_CONTEXT_ID;
@@ -769,6 +769,11 @@ impl Node {
     /// calling this method after each process restart.
     pub async fn topic_block(&self, node_id: NodeId, topic: Topic) {
         self.sync_block_list.block_topic(node_id, topic).await;
+    }
+
+    /// Inserts a node address into the local address book.
+    pub async fn insert_node_addr(&self, addr: EndpointAddr) -> Result<(), NetworkError> {
+        self.network.insert_node_addr(addr).await
     }
 }
 
