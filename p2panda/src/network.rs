@@ -11,7 +11,7 @@ use p2panda_net::gossip::{GossipConfig, GossipError};
 use p2panda_net::iroh_endpoint::{EndpointAddr, EndpointError, IrohConfig, RelayUrl};
 use p2panda_net::iroh_mdns::MdnsDiscoveryError;
 use p2panda_net::sync::LogSyncError;
-use p2panda_net::utils::from_verifying_key;
+use p2panda_net::utils::{from_verifying_key, to_verifying_key};
 use p2panda_net::{
     AddressBook, DEFAULT_NETWORK_ID, Discovery, Endpoint, Gossip, LogSync, MdnsDiscovery,
     NetworkId, NodeId,
@@ -123,6 +123,12 @@ impl Network {
         let node_info = NodeInfo::from(addr);
         self.address_book.insert_node_info(node_info).await?;
         Ok(())
+    }
+
+    /// Returns true if the address book already has an entry for this endpoint.
+    pub async fn node_addr_known(&self, addr: &EndpointAddr) -> Result<bool, NetworkError> {
+        let node_id = to_verifying_key(addr.id);
+        Ok(self.address_book.node_info(node_id).await?.is_some())
     }
 }
 

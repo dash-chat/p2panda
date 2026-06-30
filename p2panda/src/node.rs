@@ -401,6 +401,11 @@ impl Node {
     pub async fn insert_node_addr(&self, addr: EndpointAddr) -> Result<(), NetworkError> {
         self.network.insert_node_addr(addr).await
     }
+
+    /// Returns true if the address book already has an entry for this endpoint.
+    pub async fn node_addr_known(&self, addr: &EndpointAddr) -> Result<bool, NetworkError> {
+        self.network.node_addr_known(addr).await
+    }
 }
 
 #[cfg(any(test, feature = "test_utils"))]
