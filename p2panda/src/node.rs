@@ -4,8 +4,9 @@ use std::fmt::Debug;
 
 use futures_util::Stream;
 use p2panda_core::Topic;
+use p2panda_net::iroh_endpoint::EndpointAddr;
 use p2panda_net::iroh_endpoint::RelayUrl;
-use p2panda_net::{NetworkId, NodeId};
+use p2panda_net::{Endpoint, NetworkId, NodeId};
 use p2panda_store::sqlite::{SqliteError, SqliteStore, SqliteStoreBuilder};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -363,6 +364,15 @@ impl Node {
         self.network.network_id()
     }
 
+    /// Returns a handle to the shared networking endpoint.
+    ///
+    /// This is the same endpoint used internally by the node for all peer-to-peer connections.
+    /// Call [`Endpoint::endpoint`] on the returned handle to access the underlying `iroh::Endpoint`,
+    /// or [`Endpoint::accept`] to register additional protocol handlers on it.
+    pub fn endpoint(&self) -> Endpoint {
+        self.network.endpoint.clone()
+    }
+
     /// Inserts a bootstrap node into the local address book.
     ///
     /// Bootstrap nodes are used as a starting point for the random-walk discovery algorithm to
@@ -385,6 +395,11 @@ impl Node {
         relay_url: RelayUrl,
     ) -> Result<(), NetworkError> {
         self.network.insert_bootstrap(node_id, relay_url).await
+    }
+
+    /// Inserts a node address into the local address book.
+    pub async fn insert_node_addr(&self, addr: EndpointAddr) -> Result<(), NetworkError> {
+        self.network.insert_node_addr(addr).await
     }
 }
 
