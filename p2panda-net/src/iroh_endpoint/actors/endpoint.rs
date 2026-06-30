@@ -193,7 +193,7 @@ impl ThreadLocalActor for IrohEndpoint {
                 );
 
                 // Create and bind the endpoint to the socket.
-                let endpoint = iroh::Endpoint::builder(presets::Minimal)
+                let endpoint = iroh::Endpoint::builder(presets::N0)
                     .relay_mode(relay_mode)
                     .address_lookup(address_book_discovery)
                     .secret_key(from_signing_key(state.signing_key.clone()))
