@@ -25,6 +25,7 @@ use crate::iroh_endpoint::actors::connection::{
 use crate::iroh_endpoint::actors::is_globally_reachable_endpoint;
 use crate::iroh_endpoint::config::IrohConfig;
 use crate::iroh_endpoint::discovery::AddressBookDiscovery;
+use crate::iroh_endpoint::os_resolver::OsResolver;
 use crate::utils::{ShortFormat, from_signing_key};
 use crate::{NetworkId, NodeId, ProtocolId, hash_protocol_id_with_network_id};
 
@@ -196,6 +197,7 @@ impl ThreadLocalActor for IrohEndpoint {
                 let endpoint = iroh::Endpoint::builder(presets::Minimal)
                     .relay_mode(relay_mode)
                     .address_lookup(address_book_discovery)
+                    .dns_resolver(iroh::dns::DnsResolver::custom(OsResolver))
                     .secret_key(from_signing_key(state.signing_key.clone()))
                     .transport_config(quic_transport_config)
                     .bind_addr(socket_address_v4)?
