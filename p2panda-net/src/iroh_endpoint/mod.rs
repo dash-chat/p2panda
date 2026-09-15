@@ -6,7 +6,6 @@ mod api;
 mod builder;
 mod config;
 mod discovery;
-mod os_resolver;
 #[cfg(feature = "supervisor")]
 mod supervisor;
 #[cfg(test)]
