@@ -5,7 +5,6 @@
 use std::collections::BTreeMap;
 use std::net::{SocketAddrV4, SocketAddrV6};
 use std::sync::Arc;
-use std::time::Duration;
 
 use iroh::endpoint::{QuicTransportConfig, presets};
 use iroh::protocol::DynProtocolHandler;
@@ -27,16 +26,6 @@ use crate::iroh_endpoint::config::IrohConfig;
 use crate::iroh_endpoint::discovery::AddressBookDiscovery;
 use crate::utils::{ShortFormat, from_signing_key};
 use crate::{NetworkId, NodeId, ProtocolId, hash_protocol_id_with_network_id};
-
-/// Period of inactivity before sending a keep-alive packet.
-///
-/// Keep-alive packets prevent an inactive but otherwise healthy connection from timing out.
-///
-/// Must be set lower than the idle_timeout of both peers to be effective.
-pub const KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(5);
-
-/// Maximum duration of inactivity to accept before timing out the connection.
-pub const MAX_IDLE_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[allow(clippy::large_enum_variant)]
 pub enum ToIrohEndpoint {
@@ -176,9 +165,12 @@ impl ThreadLocalActor for IrohEndpoint {
 
                 // Default QUIC transport parameters, can be overwritten when connecting to a node.
                 let quic_transport_config = QuicTransportConfig::builder()
-                    .keep_alive_interval(KEEP_ALIVE_INTERVAL)
+                    .keep_alive_interval(config.keep_alive_interval)
                     .max_idle_timeout(Some(
-                        MAX_IDLE_TIMEOUT.try_into().expect("correct max idle value"),
+                        config
+                            .max_idle_timeout
+                            .try_into()
+                            .expect("correct max idle value"),
                     ))
                     .build();
 
