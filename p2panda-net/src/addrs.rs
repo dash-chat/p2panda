@@ -678,6 +678,11 @@ impl NodeMetrics {
         self.last_succeeded_at = Some(Timestamp::now());
     }
 
+    /// Forgets the last failed connection attempt, so the node is no longer considered stale.
+    pub fn forget_failed_connection(&mut self) {
+        self.last_failed_at = None;
+    }
+
     /// Returns true if last known connection attempt failed.
     pub fn is_stale(&self) -> bool {
         match (self.last_succeeded_at, self.last_failed_at) {
@@ -862,6 +867,14 @@ mod tests {
 
         // After a successful connection was reported, it is not stale again.
         node_info.metrics.report_successful_connection();
+        assert!(!node_info.metrics.is_stale());
+
+        MockClock::advance_system_time(Duration::from_secs(1));
+
+        // Forgetting the last failed connection attempt makes it not stale either.
+        node_info.metrics.report_failed_connection();
+        assert!(node_info.metrics.is_stale());
+        node_info.metrics.forget_failed_connection();
         assert!(!node_info.metrics.is_stale());
     }
 }
