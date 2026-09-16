@@ -97,6 +97,13 @@ impl AddressLookup for AddressBookDiscovery {
                 return;
             }
 
+            // Connection attempts that failed while we had other addresses may have failed on our
+            // side (e.g. we were offline). Forget them before announcing the new addresses, which
+            // triggers re-joins, so that the other nodes can be resolved and dialed again.
+            if let Err(err) = address_book.forget_failed_connections().await {
+                warn!("could not forget failed connections in address book: {err:#?}");
+            }
+
             // Update entry about ourselves in address book to allow this information to propagate
             // in other discovery mechanisms or side-channels outside of iroh.
             if let Err(err) = address_book
