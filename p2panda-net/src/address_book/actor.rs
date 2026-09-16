@@ -106,6 +106,9 @@ pub enum ToAddressBookActor {
     /// Report outcomes of incoming or outgoing connections.
     Report(NodeId, ConnectionOutcome),
 
+    /// Forget the last failed connection attempt of every stale node.
+    ForgetFailedConnections,
+
     /// Returns internal address book store.
     Store(RpcReplyPort<SqliteStore>),
 }
@@ -325,6 +328,18 @@ impl ThreadLocalActor for AddressBookActor {
                     state.store.insert_node_info_tx(node_info).await?;
                 });
             }
+            ToAddressBookActor::ForgetFailedConnections => {
+                let stale_node_infos =
+                    AddressBookStore::<NodeId, NodeInfo>::all_stale_node_infos(&state.store)
+                        .await?;
+
+                tx!(state.store, {
+                    for mut node_info in stale_node_infos {
+                        node_info.metrics.forget_failed_connection();
+                        state.store.insert_node_info_tx(node_info).await?;
+                    }
+                });
+            }
             ToAddressBookActor::NodeInfo(node_id, reply) => {
                 let result = state.store.node_info(&node_id).await?;
                 let _ = reply.send(result);
@@ -389,12 +404,57 @@ mod tests {
     use ractor::call;
     use ractor::thread_local::{ThreadLocalActor, ThreadLocalActorSpawner};
 
+    use crate::address_book::report::ConnectionOutcome;
     use crate::addrs::{
         NodeInfo, NodeMetrics, NodeTransportInfo, TransportAddress, UnsignedTransportInfo,
     };
     use crate::test_utils::test_args;
 
     use super::{AddressBookActor, ToAddressBookActor};
+
+    #[tokio::test]
+    async fn forget_failed_connections() {
+        let args = test_args();
+        let store = SqliteStore::temporary().await;
+
+        let spawner = ThreadLocalActorSpawner::new();
+
+        let (actor, _handle) = AddressBookActor::spawn(None, (store,), spawner)
+            .await
+            .unwrap();
+
+        let node_info = NodeInfo::new(args.verifying_key);
+        call!(actor, ToAddressBookActor::InsertNodeInfo, node_info)
+            .unwrap()
+            .unwrap();
+
+        actor
+            .send_message(ToAddressBookActor::Report(
+                args.verifying_key,
+                ConnectionOutcome::Failed,
+            ))
+            .unwrap();
+        let result = call!(
+            actor,
+            ToAddressBookActor::NodeInfo,
+            args.verifying_key
+        )
+        .unwrap()
+        .expect("node info exists in store");
+        assert!(result.is_stale());
+
+        actor
+            .send_message(ToAddressBookActor::ForgetFailedConnections)
+            .unwrap();
+        let result = call!(
+            actor,
+            ToAddressBookActor::NodeInfo,
+            args.verifying_key
+        )
+        .unwrap()
+        .expect("node info exists in store");
+        assert!(!result.is_stale());
+    }
 
     #[tokio::test]
     async fn insert_node_and_transport_info() {

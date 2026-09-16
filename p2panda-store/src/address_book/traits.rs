@@ -86,6 +86,9 @@ where
     /// Returns a list of all known node informations.
     fn all_node_infos(&self) -> impl Future<Output = Result<Vec<N>, Self::Error>>;
 
+    /// Returns a list of all node informations which have gone stale.
+    fn all_stale_node_infos(&self) -> impl Future<Output = Result<Vec<N>, Self::Error>>;
+
     /// Returns the count of all known nodes.
     fn all_nodes_len(&self) -> impl Future<Output = Result<usize, Self::Error>>;
 
