@@ -44,6 +44,12 @@ use crate::streams::{
 
 static_assertions::assert_impl_all!(Node: Send, Sync);
 
+#[derive(Debug)]
+enum NodeNetwork {
+    Online(Network),
+    Offline { network_id: NetworkId },
+}
+
 /// Node API with methods to establish ephemeral and eventually consistent topic streams.
 #[derive(Debug)]
 pub struct Node {
@@ -52,7 +58,7 @@ pub struct Node {
     forge: OperationForge,
     credentials: Credentials,
     tasks: TaskTracker,
-    network: Network,
+    network: NodeNetwork,
     spaces_manager: SpacesManager,
     key_bundle_task: KeyBundleTask,
     events_tx: broadcast::Sender<SystemEvent>,
@@ -99,13 +105,20 @@ impl Node {
         let connection_authoriser = ConnectionAuthoriser::new();
         connection_authoriser.permissive().await;
 
-        let network = Network::spawn(
-            config.network.clone(),
-            credentials.node_signing_key(),
-            store.clone(),
-            connection_authoriser.clone(),
-        )
-        .await?;
+        let network = if config.offline {
+            NodeNetwork::Offline {
+                network_id: config.network.network_id,
+            }
+        } else {
+            let network = Network::spawn(
+                config.network.clone(),
+                credentials.node_signing_key(),
+                store.clone(),
+                connection_authoriser.clone(),
+            )
+            .await?;
+            NodeNetwork::Online(network)
+        };
 
         let spaces_manager = spaces_manager(
             forge.clone(),
@@ -351,12 +364,16 @@ impl Node {
         let live_mode = true;
         let topic = topic.into();
 
-        let sync_handle = self
-            .network
-            .log_sync
-            .stream(topic, live_mode)
-            .await
-            .map_err(|err| CreateStreamError(err.to_string()))?;
+        let sync_handle = match &self.network {
+            NodeNetwork::Online(network) => Some(
+                network
+                    .log_sync
+                    .stream(topic, live_mode)
+                    .await
+                    .map_err(|err| CreateStreamError(err.to_string()))?,
+            ),
+            NodeNetwork::Offline { .. } => None,
+        };
 
         let pipeline = Pipeline::new(
             topic,
@@ -398,8 +415,15 @@ impl Node {
         M: Serialize + for<'a> Deserialize<'a>,
     {
         let topic = topic.into();
-        let handle = self
-            .network
+        let network = match &self.network {
+            NodeNetwork::Online(network) => network,
+            NodeNetwork::Offline { .. } => {
+                return Err(CreateStreamError(
+                    "ephemeral streams require networking, but the node is offline".to_string(),
+                ));
+            }
+        };
+        let handle = network
             .gossip
             .stream(topic)
             .await
@@ -421,12 +445,16 @@ impl Node {
     ) -> Result<impl Stream<Item = SystemEvent> + Send + Unpin + 'static, CreateStreamError> {
         let connection_authoriser_events = self.connection_authoriser.events().await;
 
-        let discovery_events = self
-            .network
-            .discovery
-            .events()
-            .await
-            .map_err(|err| CreateStreamError(err.to_string()))?;
+        let discovery_events = match &self.network {
+            NodeNetwork::Online(network) => Some(
+                network
+                    .discovery
+                    .events()
+                    .await
+                    .map_err(|err| CreateStreamError(err.to_string()))?,
+            ),
+            NodeNetwork::Offline { .. } => None,
+        };
 
         let events_rx = self.resubscribe_event_stream();
 
@@ -732,7 +760,10 @@ impl Node {
 
     /// Returns the network identifier being used by the node.
     pub fn network_id(&self) -> NetworkId {
-        self.network.network_id()
+        match &self.network {
+            NodeNetwork::Online(network) => network.network_id(),
+            NodeNetwork::Offline { network_id } => *network_id,
+        }
     }
 
     pub async fn me(&self) -> Result<Member, MemberError> {
@@ -761,7 +792,10 @@ impl Node {
         node_id: NodeId,
         relay_url: RelayUrl,
     ) -> Result<(), NetworkError> {
-        self.network.insert_bootstrap(node_id, relay_url).await
+        match &self.network {
+            NodeNetwork::Online(network) => network.insert_bootstrap(node_id, relay_url).await,
+            NodeNetwork::Offline { .. } => Err(NetworkError::Offline),
+        }
     }
 
     /// Allows all connection attempts with the given node.
@@ -830,10 +864,21 @@ pub enum AckPolicy {
     Automatic,
 }
 
-#[derive(Clone, Default, Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct Config {
     pub ack_policy: AckPolicy,
     pub network: NetworkConfig,
+    pub offline: bool,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            ack_policy: AckPolicy::default(),
+            network: NetworkConfig::default(),
+            offline: false,
+        }
+    }
 }
 
 /// Error occurred when spawning network or store processes.
@@ -848,6 +893,9 @@ pub enum SpawnError {
 
     #[error(transparent)]
     SpacesManager(#[from] SpacesManagerError),
+
+    #[error("network settings were configured on an offline node")]
+    OfflineNetworkConfig,
 }
 
 /// Broken / closed communication channel with the internal actor in `p2panda-net` prevented

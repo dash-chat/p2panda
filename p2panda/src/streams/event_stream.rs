@@ -50,21 +50,14 @@ pub type EventStream = Pin<Box<dyn Stream<Item = SystemEvent> + Send + Unpin + '
 pub(crate) fn event_stream(
     events_stream: broadcast::Receiver<SystemEvent>,
     connection_authoriser_events: broadcast::Receiver<ConnectionAuthoriserEvent>,
-    discovery_events: broadcast::Receiver<DiscoveryEvent>,
+    discovery_events: Option<broadcast::Receiver<DiscoveryEvent>>,
 ) -> EventStream {
     let events_broadcast_stream = BroadcastStream::new(events_stream);
     let connection_authoriser_broadcast_stream = BroadcastStream::new(connection_authoriser_events);
-    let discovery_broadcast_stream = BroadcastStream::new(discovery_events);
 
     let connection_authoriser_stream: Pin<Box<dyn Stream<Item = SystemEvent> + Send>> = Box::pin(
         connection_authoriser_broadcast_stream
             .filter_map(|event| async { event.ok().map(SystemEvent::ConnectionAuthoriser) })
-            .boxed(),
-    );
-
-    let discovery_stream: Pin<Box<dyn Stream<Item = SystemEvent> + Send>> = Box::pin(
-        discovery_broadcast_stream
-            .filter_map(|event| async { event.ok().map(SystemEvent::Discovery) })
             .boxed(),
     );
 
@@ -73,7 +66,17 @@ pub(crate) fn event_stream(
 
     let mut stream_set = SelectAll::new();
     stream_set.push(connection_authoriser_stream);
-    stream_set.push(discovery_stream);
+
+    if let Some(discovery_events) = discovery_events {
+        let discovery_broadcast_stream = BroadcastStream::new(discovery_events);
+        let discovery_stream: Pin<Box<dyn Stream<Item = SystemEvent> + Send>> = Box::pin(
+            discovery_broadcast_stream
+                .filter_map(|event| async { event.ok().map(SystemEvent::Discovery) })
+                .boxed(),
+        );
+        stream_set.push(discovery_stream);
+    }
+
     stream_set.push(events_stream);
 
     Box::pin(stream_set)
