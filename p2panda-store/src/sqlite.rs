@@ -1,14 +1,31 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! SQLite database implementation with associated utility functions.
+use std::str::FromStr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use p2panda_core::cbor::EncodeError;
 use sqlx::migrate::{MigrateDatabase, Migrator};
-use sqlx::sqlite::SqlitePoolOptions;
+use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::{Sqlite, migrate};
 use thiserror::Error;
 use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore};
+
+/// How long to wait for another connection to release the database write lock
+/// before giving up with `SQLITE_BUSY`.
+///
+/// The in-process semaphore below serializes transactions within one process,
+/// but a database file can be open in several processes at once — on iOS the
+/// app and its push extension share one. sqlx defaults this to 5 seconds,
+/// which a backlog being ingested next door can outlast.
+const BUSY_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Connection options for `url` with the settings a multi-process database
+/// needs. sqlx parses everything else out of the URL as usual.
+fn connect_options(url: &str) -> Result<SqliteConnectOptions, SqliteError> {
+    Ok(SqliteConnectOptions::from_str(url)?.busy_timeout(BUSY_TIMEOUT))
+}
 
 /// Creates the SQLite database if it doesn't already exist.
 pub async fn create_database(url: &str) -> Result<(), SqliteError> {
@@ -33,7 +50,7 @@ pub async fn connection_pool(
 ) -> Result<sqlx::SqlitePool, SqliteError> {
     let pool: sqlx::SqlitePool = SqlitePoolOptions::new()
         .max_connections(max_connections)
-        .connect(url)
+        .connect_with(connect_options(url)?)
         .await?;
     Ok(pool)
 }
@@ -135,7 +152,7 @@ impl SqliteStoreBuilder {
 
         let pool: sqlx::SqlitePool = SqlitePoolOptions::new()
             .max_connections(self.max_connections)
-            .connect(&self.url)
+            .connect_with(connect_options(&self.url)?)
             .await?;
 
         if self.run_migrations {
@@ -304,7 +321,15 @@ impl crate::traits::Transaction for SqliteStore {
             tx_ref.is_none(),
             "can't have an already existing transaction after an just-acquired permit"
         );
-        let tx = self.pool.begin().await?;
+        // `BEGIN IMMEDIATE`, not the plain deferred `BEGIN` sqlx would issue.
+        // A deferred transaction takes no write lock until its first write, so
+        // when the database is open in another process as well, one that has
+        // already read cannot upgrade: SQLite refuses with `SQLITE_BUSY`
+        // (`SQLITE_BUSY_SNAPSHOT`) *without* calling the busy handler, because
+        // waiting there could deadlock, and no timeout can help. Taking the
+        // write lock up front costs a little concurrency and makes both the
+        // wait and the timeout meaningful.
+        let tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
         tx_ref.replace(tx);
 
         Ok(TransactionPermit::new(permit, self.tx.clone()))
@@ -452,7 +477,7 @@ mod tests {
     use sqlx::{Executor, query, query_as, query_scalar};
     use tokio::pin;
 
-    use crate::sqlite::{SqliteError, SqliteStore};
+    use crate::sqlite::{SqliteError, SqliteStore, SqliteStoreBuilder};
     use crate::traits::Transaction;
 
     #[tokio::test]
@@ -630,5 +655,102 @@ mod tests {
 
         // Make sure we give pool 2 the time it needs to finish.
         handle.await.unwrap();
+    }
+
+    /// Two stores over one database file stand in for two processes sharing
+    /// one, as an iOS app and its push extension do: each has its own pool and
+    /// its own transaction semaphore, so nothing but SQLite serializes them.
+    ///
+    /// A transaction that reads and then writes used to fail here. A deferred
+    /// `BEGIN` holds no write lock, so the other connection can commit in
+    /// between, and SQLite then refuses the upgrade with `SQLITE_BUSY`
+    /// immediately — it does not call the busy handler, so no timeout waits it
+    /// out.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn transactions_across_two_connections_to_one_file() {
+        let path = std::env::temp_dir().join(format!(
+            "p2panda-store-shared-{}.db",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock is past the epoch")
+                .as_nanos()
+        ));
+        let url = format!("sqlite://{}", path.display());
+        let open = async || {
+            SqliteStoreBuilder::new()
+                .database_url(&url)
+                .create_database(true)
+                .build()
+                .await
+                .expect("store opens")
+        };
+
+        let app = open().await;
+        let extension = open().await;
+
+        app.execute(async |pool| {
+            pool.execute("CREATE TABLE probe (id TEXT PRIMARY KEY)")
+                .await?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+        // The app opens a transaction and reads through it, fixing its snapshot.
+        let app_permit = app.begin().await.unwrap();
+        app.tx(async |tx| {
+            let _: i64 = query_scalar("SELECT COUNT(*) FROM probe")
+                .fetch_one(&mut **tx)
+                .await?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+        // Meanwhile the other connection writes and commits.
+        let writer = tokio::spawn({
+            let extension = extension.clone();
+            async move {
+                let permit = extension.begin().await.unwrap();
+                extension
+                    .tx(async |tx| {
+                        query("INSERT INTO probe (id) VALUES ('extension')")
+                            .execute(&mut **tx)
+                            .await?;
+                        Ok(())
+                    })
+                    .await
+                    .unwrap();
+                extension.commit(permit).await.unwrap();
+            }
+        });
+
+        // Long enough for that writer to get in, if it can.
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+
+        // The app's own write must still go through.
+        app.tx(async |tx| {
+            query("INSERT INTO probe (id) VALUES ('app')")
+                .execute(&mut **tx)
+                .await?;
+            Ok(())
+        })
+        .await
+        .expect("the other connection does not refuse the app's write");
+        app.commit(app_permit).await.unwrap();
+
+        writer.await.unwrap();
+
+        let stored: i64 = app
+            .execute(async |pool| {
+                Ok(query_scalar("SELECT COUNT(*) FROM probe")
+                    .fetch_one(pool)
+                    .await?)
+            })
+            .await
+            .unwrap();
+        assert_eq!(stored, 2, "both connections stored their row");
+
+        let _ = std::fs::remove_file(&path);
     }
 }

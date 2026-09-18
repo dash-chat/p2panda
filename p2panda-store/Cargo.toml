@@ -52,4 +52,4 @@ tokio = { workspace = true, default-features = true, features = ["sync"], option
 futures-test = "0.3.31"
 p2panda-core = { workspace = true, features = ["test_utils"] }
 p2panda-store = { path = ".", features = ["test_utils"] }
-tokio = { workspace = true, default-features = true, features = ["rt", "macros"] }
+tokio = { workspace = true, default-features = true, features = ["rt", "rt-multi-thread", "macros", "time"] }
