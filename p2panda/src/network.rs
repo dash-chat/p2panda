@@ -208,4 +208,7 @@ pub enum NetworkError {
 
     #[error(transparent)]
     LogSync(#[from] LogSyncError<Extensions>),
+
+    #[error("operation requires networking, but the node is offline")]
+    Offline,
 }

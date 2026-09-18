@@ -103,25 +103,34 @@ const IMPORT_BUFFER_SIZE: usize = 16;
 pub(crate) async fn processed_stream<M>(
     topic: Topic,
     ack_policy: AckPolicy,
-    sync_handle: SyncHandle<Operation, TopicLogSyncEvent<Extensions>>,
+    sync_handle: Option<SyncHandle<Operation, TopicLogSyncEvent<Extensions>>>,
     store: SqliteStore,
     forge: OperationForge,
     pipeline: Pipeline,
     event_tx: broadcast::Sender<SystemEvent>,
     from: StreamFrom,
+    custom_cursor_name: Option<String>,
 ) -> Result<(StreamPublisher<M>, StreamSubscription<M>), CreateStreamError>
 where
     M: Serialize + for<'a> Deserialize<'a> + Send + 'static,
 {
-    let acked = Acked::new(store.clone(), topic);
+    let acked = match custom_cursor_name {
+        Some(cursor_name) => Acked::from_name(store.clone(), topic, cursor_name),
+        None => Acked::new(store.clone(), topic),
+    };
 
-    // Sync handle is used on the publisher and when importing from external streams.
-    let sync_handle = Arc::new(sync_handle);
+    // Sync handle is used on the publisher and when importing from external streams. An offline
+    // node has no sync handle.
+    let sync_handle = sync_handle.map(Arc::new);
 
-    let mut sync_stream = sync_handle
-        .subscribe()
-        .await
-        .map_err(|err| CreateStreamError(err.to_string()))?;
+    let mut sync_stream = match &sync_handle {
+        Some(sync_handle) => sync_handle
+            .subscribe()
+            .await
+            .map_err(|err| CreateStreamError(err.to_string()))?
+            .boxed(),
+        None => futures_util::stream::pending().boxed(),
+    };
 
     // Channel to send processed events to the application-layer.
     let (app_tx, app_rx) = mpsc::channel::<StreamEvent<M>>(BUFFER_SIZE);
@@ -440,7 +449,7 @@ pub(crate) async fn process_operation_in(
     source: Source,
     topic: Topic,
     pipeline: &Pipeline,
-    sync_handle: &Arc<SyncHandle<Operation, TopicLogSyncEvent<Extensions>>>,
+    sync_handle: &Option<Arc<SyncHandle<Operation, TopicLogSyncEvent<Extensions>>>>,
 ) -> Event {
     let log_id = operation.header.extensions.log_id();
     let prune_flag = operation.header.extensions.prune_flag();
@@ -456,7 +465,9 @@ pub(crate) async fn process_operation_in(
             //
             // If no active live session exists, nodes will pick up the operation later when running
             // the sync protocol.
-            if sync_handle.publish(operation.clone()).is_err() => {
+            if sync_handle
+                .as_ref()
+                .is_some_and(|sync_handle| sync_handle.publish(operation.clone()).is_err()) => {
                 warn!(
                     operation_id = %operation.hash(),
                     "failed sending operation on sync handle"

@@ -105,7 +105,7 @@ pub(crate) type ToOutputTx<M> = mpsc::Sender<Vec<ForwardEvent<M>>>;
 pub struct StreamPublisher<M> {
     topic: Topic,
     forge: OperationForge,
-    sync_handle: Arc<SyncHandle<Operation, TopicLogSyncEvent<Extensions>>>,
+    sync_handle: Option<Arc<SyncHandle<Operation, TopicLogSyncEvent<Extensions>>>>,
     pub(crate) publish_tx: PublishTx<M>,
     import_external_tx: ImportExternalTx,
     pub(crate) import_local_tx: ImportLocalTx,
@@ -122,7 +122,7 @@ where
     pub fn new(
         topic: Topic,
         forge: OperationForge,
-        sync_handle: Arc<SyncHandle<Operation, TopicLogSyncEvent<Extensions>>>,
+        sync_handle: Option<Arc<SyncHandle<Operation, TopicLogSyncEvent<Extensions>>>>,
         publish_tx: PublishTx<M>,
         import_external_tx: ImportExternalTx,
         import_local_tx: ImportLocalTx,
@@ -278,11 +278,14 @@ where
     ///
     /// Call `close()` if you wish to drop a `StreamPublisher` and then immediately create a new
     /// stream for the same topic.
+    /// An offline node has no sync session, so closing one is a no-op.
     pub async fn close(&self) -> Result<(), CloseError> {
-        self.sync_handle
-            .close()
-            .await
-            .map_err(|_| CloseError(self.topic.fmt_short()))?;
+        if let Some(sync_handle) = &self.sync_handle {
+            sync_handle
+                .close()
+                .await
+                .map_err(|_| CloseError(self.topic.fmt_short()))?;
+        }
 
         Ok(())
     }
