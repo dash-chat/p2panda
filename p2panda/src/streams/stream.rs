@@ -96,7 +96,7 @@ const IMPORT_BUFFER_SIZE: usize = 16;
 pub(crate) async fn processed_stream<M>(
     topic: Topic,
     ack_policy: AckPolicy,
-    sync_handle: SyncHandle<Operation, TopicLogSyncEvent<Extensions>>,
+    sync_handle: Option<SyncHandle<Operation, TopicLogSyncEvent<Extensions>>>,
     store: SqliteStore,
     forge: OperationForge,
     pipeline: Pipeline<LogId, Extensions, Topic>,
@@ -107,10 +107,18 @@ where
 {
     let acked = Acked::new(store.clone(), topic);
 
-    let mut sync_stream = sync_handle
-        .subscribe()
-        .await
-        .map_err(|err| CreateStreamError(err.to_string()))?;
+    // Keep around the sync handle on both the publisher and subscriber ends to keep it running
+    // even if one half got dropped. An offline node has no sync handle.
+    let sync_handle = sync_handle.map(Arc::new);
+
+    let mut sync_stream = match &sync_handle {
+        Some(sync_handle) => sync_handle
+            .subscribe()
+            .await
+            .map_err(|err| CreateStreamError(err.to_string()))?
+            .boxed(),
+        None => futures_util::stream::pending().boxed(),
+    };
 
     // Channel to send processed events to the application-layer.
     let (app_tx, app_rx) = mpsc::channel::<StreamEvent<M>>(BUFFER_SIZE);
@@ -303,8 +311,6 @@ where
 
     // Keep around the sync handle on both the publisher and subscriber ends to keep it running
     // even if one half got dropped.
-    let sync_handle = Arc::new(sync_handle);
-
     let tx = StreamPublisher {
         topic,
         sync_handle: sync_handle.clone(),
@@ -565,7 +571,7 @@ pub(crate) async fn ack_published_operation<M>(
 #[derive(Clone, Debug)]
 pub struct StreamPublisher<M> {
     topic: Topic,
-    sync_handle: Arc<SyncHandle<Operation, TopicLogSyncEvent<Extensions>>>,
+    sync_handle: Option<Arc<SyncHandle<Operation, TopicLogSyncEvent<Extensions>>>>,
     forge: OperationForge,
     #[allow(clippy::type_complexity)]
     publish_tx: mpsc::Sender<(
@@ -685,10 +691,14 @@ where
         //
         // If no active live session exists, nodes will pick up the operation later when running the
         // sync protocol.
-        self.sync_handle
-            .publish(operation)
-            .await
-            .map_err(|err| PublishError::SyncHandle(err.to_string()))?;
+        //
+        // An offline node has no sync handle, so this step is skipped.
+        if let Some(sync_handle) = &self.sync_handle {
+            sync_handle
+                .publish(operation)
+                .await
+                .map_err(|err| PublishError::SyncHandle(err.to_string()))?;
+        }
 
         Ok(PublishFuture { hash, processed_rx })
     }
@@ -749,7 +759,7 @@ pub struct StreamSubscription<M> {
     store: SqliteStore,
     acked: Acked,
     #[allow(unused)]
-    sync_handle: Arc<SyncHandle<Operation, TopicLogSyncEvent<Extensions>>>,
+    sync_handle: Option<Arc<SyncHandle<Operation, TopicLogSyncEvent<Extensions>>>>,
     stream: ReceiverStream<StreamEvent<M>>,
 }
 
