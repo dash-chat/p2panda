@@ -27,12 +27,14 @@ mod api {
     use std::time::Duration;
 
     use mock_instant::thread_local::MockClock;
+    use p2panda::node::SpawnError;
     use p2panda::operation::{Extensions, LogId};
     use p2panda::streams::{EphemeralMessage, ProcessedOperation, StreamEvent, SystemEvent};
     use p2panda::{Credentials, Topic};
     use p2panda_core::cbor::encode_cbor;
     use p2panda_core::test_utils::{TestLog, setup_logging};
     use p2panda_net::discovery::DiscoveryEvent;
+    use p2panda_net::iroh_endpoint::RelayUrl;
     use p2panda_store::logs::LogStore;
     use tokio::task::JoinHandle;
     use tokio_stream::StreamExt;
@@ -301,6 +303,53 @@ mod api {
         assert!(imported.iter().any(|event| event.id() == operation_2.hash));
         assert!(imported.iter().any(|event| event.id() == operation_3.hash));
         assert!(end_received);
+    }
+
+    #[tokio::test]
+    async fn offline_node_streams_locally() {
+        setup_logging();
+
+        let topic = Topic::random();
+
+        // An offline node binds no networking layer but keeps its identity and local storage.
+        let panda = p2panda::builder().offline().spawn().await.unwrap();
+
+        // Publishing and processing work purely locally, without any sync handle.
+        let (panda_tx, mut panda_rx) = panda.stream::<String>(topic).await.unwrap();
+        panda_tx.publish("Hello, myself!".into()).await.unwrap();
+
+        let mut received: Option<ProcessedOperation<String>> = None;
+        while let Some(event) = panda_rx.next().await {
+            if let StreamEvent::Processed { operation, .. } = event {
+                received = Some(operation);
+                break;
+            }
+        }
+
+        let received = received.expect("offline node should process locally published operation");
+        assert_eq!(received.message(), &"Hello, myself!".to_string());
+        assert_eq!(received.author(), panda.id());
+    }
+
+    #[tokio::test]
+    async fn offline_node_rejects_network_config() {
+        let relay_url: RelayUrl = "https://my.relay.link".parse().unwrap();
+
+        // Combining `offline` with a live-network setting is a contradiction, regardless of the
+        // order in which the two are configured.
+        let result = p2panda::builder()
+            .offline()
+            .relay_url(relay_url.clone())
+            .spawn()
+            .await;
+        assert!(matches!(result, Err(SpawnError::OfflineNetworkConfig)));
+
+        let result = p2panda::builder()
+            .relay_url(relay_url)
+            .offline()
+            .spawn()
+            .await;
+        assert!(matches!(result, Err(SpawnError::OfflineNetworkConfig)));
     }
 }
 
