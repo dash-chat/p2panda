@@ -35,12 +35,14 @@ mod api {
     use std::time::Duration;
 
     use mock_instant::thread_local::MockClock;
+    use p2panda::node::SpawnError;
     use p2panda::operation::{Extensions, LogId};
     use p2panda::streams::{EphemeralMessage, ProcessedOperation, StreamEvent, SystemEvent};
     use p2panda::{Credentials, Topic};
     use p2panda_core::cbor::encode_cbor;
     use p2panda_core::test_utils::{TestLog, setup_logging};
     use p2panda_net::discovery::DiscoveryEvent;
+    use p2panda_net::iroh_endpoint::RelayUrl;
     use p2panda_store::logs::LogStore;
     use tokio::task::JoinHandle;
     use tokio_stream::StreamExt;
@@ -60,6 +62,53 @@ mod api {
             .await?;
 
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn offline_node_streams_locally() {
+        setup_logging();
+
+        let topic = Topic::random();
+
+        // An offline node binds no networking layer but keeps its identity and local storage.
+        let panda = p2panda::builder().offline().spawn().await.unwrap();
+
+        // Publishing and processing work purely locally, without any sync handle.
+        let (panda_tx, mut panda_rx) = panda.stream::<String>(topic).await.unwrap();
+        panda_tx.publish("Hello, myself!".into()).await.unwrap();
+
+        let mut received: Option<ProcessedOperation<String>> = None;
+        while let Some(event) = panda_rx.next().await {
+            if let StreamEvent::Processed { operation, .. } = event {
+                received = Some(operation);
+                break;
+            }
+        }
+
+        let received = received.expect("offline node should process locally published operation");
+        assert_eq!(received.message(), &"Hello, myself!".to_string());
+        assert_eq!(received.author(), panda.id());
+    }
+
+    #[tokio::test]
+    async fn offline_node_rejects_network_config() {
+        let relay_url: RelayUrl = "https://my.relay.link".parse().unwrap();
+
+        // Combining `offline` with a live-network setting is a contradiction, regardless of the
+        // order in which the two are configured.
+        let result = p2panda::builder()
+            .offline()
+            .relay_url(relay_url.clone())
+            .spawn()
+            .await;
+        assert!(matches!(result, Err(SpawnError::OfflineNetworkConfig)));
+
+        let result = p2panda::builder()
+            .relay_url(relay_url)
+            .offline()
+            .spawn()
+            .await;
+        assert!(matches!(result, Err(SpawnError::OfflineNetworkConfig)));
     }
 
     #[tokio::test]
@@ -442,7 +491,7 @@ mod event_replays {
 
         // Panda subscribes again, this time asking to replay all messages from start.
         let (_panda_tx, mut panda_rx) = panda
-            .stream_from::<String>(chat_id, StreamFrom::Start)
+            .stream_from::<String>(chat_id, StreamFrom::Start, None)
             .await
             .unwrap();
 
@@ -510,7 +559,7 @@ mod event_replays {
 
         // Force re-playing from custom cursor position with new stream subscription.
         let (_tx, mut rx) = node
-            .stream_from::<String>(topic, StreamFrom::Cursor(cursor))
+            .stream_from::<String>(topic, StreamFrom::Cursor(cursor), None)
             .await
             .unwrap();
 
@@ -518,6 +567,59 @@ mod event_replays {
         assert_replay_started(&rx.next().await.unwrap(), 2);
         assert_message_id(&rx.next().await.unwrap(), message_id_2);
         assert_message_id(&rx.next().await.unwrap(), message_id_3);
+        assert_replay_ended(&rx.next().await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn replay_stream_with_custom_cursor() {
+        setup_logging();
+
+        let topic = Topic::random();
+        let node = p2panda::builder().spawn().await.unwrap();
+
+        let (tx, mut rx) = node.stream::<String>(topic).await.unwrap();
+
+        // Publish two messages and receive them on the main stream. With the default ack policy
+        // this advances the topic's default ack-tracker to the frontier.
+        let message_id_1 = {
+            let processing = tx.publish("first".into()).await.unwrap();
+            let id = processing.hash();
+            processing.await.unwrap();
+            id
+        };
+
+        let message_id_2 = {
+            let processing = tx.publish("second".into()).await.unwrap();
+            let id = processing.hash();
+            processing.await.unwrap();
+            id
+        };
+
+        assert_message_id(&rx.next().await.unwrap(), message_id_1);
+        assert_message_id(&rx.next().await.unwrap(), message_id_2);
+
+        // Await graceful termination of the sync session.
+        let _ = tx.close().await;
+
+        drop(tx);
+        drop(rx);
+
+        // Replay from the custom cursor name's frontier. Because this cursor has never acked
+        // anything, it replays every message on the topic regardless of what the default stream
+        // already acked above.
+        let (_tx, mut rx) = node
+            .stream_from::<String>(
+                topic,
+                StreamFrom::Frontier,
+                Some("custom-replay".to_string()),
+            )
+            .await
+            .unwrap();
+
+        // We expect to receive both messages, independently of the main stream.
+        assert_replay_started(&rx.next().await.unwrap(), 2);
+        assert_message_id(&rx.next().await.unwrap(), message_id_1);
+        assert_message_id(&rx.next().await.unwrap(), message_id_2);
         assert_replay_ended(&rx.next().await.unwrap());
     }
 }

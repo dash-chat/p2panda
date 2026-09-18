@@ -45,6 +45,12 @@ use crate::streams::{
 
 static_assertions::assert_impl_all!(Node: Send, Sync);
 
+#[derive(Debug)]
+enum NodeNetwork {
+    Online(Network),
+    Offline { network_id: NetworkId },
+}
+
 /// Node API with methods to establish ephemeral and eventually consistent topic streams.
 #[derive(Debug)]
 pub struct Node {
@@ -53,7 +59,7 @@ pub struct Node {
     forge: OperationForge,
     credentials: Credentials,
     tasks: TaskTracker,
-    network: Network,
+    network: NodeNetwork,
     spaces_manager: SpacesManager,
     egress: Egress,
     #[allow(unused)]
@@ -102,13 +108,21 @@ impl Node {
         let sync_block_list = SyncBlockList::new();
         sync_block_list.permissive().await;
 
-        let network = Network::spawn(
-            config.network.clone(),
-            credentials.node_signing_key(),
-            store.clone(),
-            sync_block_list.clone(),
-        )
-        .await?;
+        let network = if config.offline {
+            NodeNetwork::Offline {
+                network_id: config.network.network_id,
+            }
+        } else {
+            NodeNetwork::Online(
+                Network::spawn(
+                    config.network.clone(),
+                    credentials.node_signing_key(),
+                    store.clone(),
+                    sync_block_list.clone(),
+                )
+                .await?,
+            )
+        };
 
         let spaces_manager = spaces_manager(
             forge.clone(),
@@ -322,7 +336,7 @@ impl Node {
     where
         M: Serialize + for<'a> Deserialize<'a> + Send + 'static,
     {
-        self.stream_from(topic, StreamFrom::Frontier).await
+        self.stream_from(topic, StreamFrom::Frontier, None).await
     }
 
     /// Eventually consistent publish and subscribe stream of messages from a given position.
@@ -334,12 +348,19 @@ impl Node {
         &self,
         topic: impl Into<Topic>,
         from: StreamFrom,
+        custom_cursor_name: Option<String>,
     ) -> Result<(StreamPublisher<M>, StreamSubscription<M>), CreateStreamError>
     where
         M: Serialize + for<'a> Deserialize<'a> + Send + 'static,
     {
-        self.stream_from_inner(topic, from, false, ProcessorHooksList::new())
-            .await
+        self.stream_from_inner(
+            topic,
+            from,
+            custom_cursor_name,
+            false,
+            ProcessorHooksList::new(),
+        )
+        .await
     }
 
     // TODO: This should be a proper TopicStream-builder.
@@ -347,6 +368,7 @@ impl Node {
         &self,
         topic: impl Into<Topic>,
         from: StreamFrom,
+        custom_cursor_name: Option<String>,
         is_space: bool,
         post_pipeline_hooks: ProcessorHooksList<Event>,
     ) -> Result<(StreamPublisher<M>, StreamSubscription<M>), CreateStreamError>
@@ -356,12 +378,16 @@ impl Node {
         let live_mode = true;
         let topic = topic.into();
 
-        let sync_handle = self
-            .network
-            .log_sync
-            .stream(topic, live_mode)
-            .await
-            .map_err(|err| CreateStreamError(err.to_string()))?;
+        let sync_handle = match &self.network {
+            NodeNetwork::Online(network) => Some(
+                network
+                    .log_sync
+                    .stream(topic, live_mode)
+                    .await
+                    .map_err(|err| CreateStreamError(err.to_string()))?,
+            ),
+            NodeNetwork::Offline { .. } => None,
+        };
 
         let pipeline = Pipeline::new(
             topic,
@@ -380,6 +406,7 @@ impl Node {
             pipeline,
             self.events_tx.clone(),
             from,
+            custom_cursor_name,
         )
         .await
         .map_err(|err| CreateStreamError(err.to_string()))?;
@@ -407,8 +434,15 @@ impl Node {
         M: Serialize + for<'a> Deserialize<'a>,
     {
         let topic = topic.into();
-        let handle = self
-            .network
+        let network = match &self.network {
+            NodeNetwork::Online(network) => network,
+            NodeNetwork::Offline { .. } => {
+                return Err(CreateStreamError(
+                    "ephemeral streams require networking, but the node is offline".to_string(),
+                ));
+            }
+        };
+        let handle = network
             .gossip
             .stream(topic)
             .await
@@ -430,12 +464,16 @@ impl Node {
     ) -> Result<impl Stream<Item = SystemEvent> + Send + Unpin + 'static, CreateStreamError> {
         let sync_block_events = self.sync_block_list.events().await;
 
-        let discovery_events = self
-            .network
-            .discovery
-            .events()
-            .await
-            .map_err(|err| CreateStreamError(err.to_string()))?;
+        let discovery_events = match &self.network {
+            NodeNetwork::Online(network) => Some(
+                network
+                    .discovery
+                    .events()
+                    .await
+                    .map_err(|err| CreateStreamError(err.to_string()))?,
+            ),
+            NodeNetwork::Offline { .. } => None,
+        };
 
         let system_events = self.resubscribe_event_stream();
 
@@ -618,7 +656,7 @@ impl Node {
         post_pipeline.push(SyncAuthoriserHook::new(self.sync_block_list.clone()));
         post_pipeline.push(MemberAssociationHook::new(self.id(), self.store.clone()));
 
-        self.stream_from_inner(topic, from, true, post_pipeline)
+        self.stream_from_inner(topic, from, None, true, post_pipeline)
             .await
     }
 
@@ -698,7 +736,10 @@ impl Node {
 
     /// Returns the network identifier being used by the node.
     pub fn network_id(&self) -> NetworkId {
-        self.network.network_id()
+        match &self.network {
+            NodeNetwork::Online(network) => network.network_id(),
+            NodeNetwork::Offline { network_id } => *network_id,
+        }
     }
 
     /// Returns a handle to the shared networking endpoint.
@@ -706,8 +747,11 @@ impl Node {
     /// This is the same endpoint used internally by the node for all peer-to-peer connections.
     /// Call [`Endpoint::endpoint`] on the returned handle to access the underlying `iroh::Endpoint`,
     /// or [`Endpoint::accept`] to register additional protocol handlers on it.
-    pub fn endpoint(&self) -> Endpoint {
-        self.network.endpoint.clone()
+    pub fn endpoint(&self) -> Result<Endpoint, NetworkError> {
+        match &self.network {
+            NodeNetwork::Online(network) => Ok(network.endpoint.clone()),
+            NodeNetwork::Offline { .. } => Err(NetworkError::Offline),
+        }
     }
 
     pub async fn me(&self) -> Result<Member, MemberError> {
@@ -736,7 +780,26 @@ impl Node {
         node_id: NodeId,
         relay_url: RelayUrl,
     ) -> Result<(), NetworkError> {
-        self.network.insert_bootstrap(node_id, relay_url).await
+        match &self.network {
+            NodeNetwork::Online(network) => network.insert_bootstrap(node_id, relay_url).await,
+            NodeNetwork::Offline { .. } => Err(NetworkError::Offline),
+        }
+    }
+
+    /// Inserts a node address into the local address book.
+    pub async fn insert_node_addr(&self, addr: EndpointAddr) -> Result<(), NetworkError> {
+        match &self.network {
+            NodeNetwork::Online(network) => network.insert_node_addr(addr).await,
+            NodeNetwork::Offline { .. } => Err(NetworkError::Offline),
+        }
+    }
+
+    /// Returns true if the address book already has an entry for this endpoint.
+    pub async fn node_addr_known(&self, addr: &EndpointAddr) -> Result<bool, NetworkError> {
+        match &self.network {
+            NodeNetwork::Online(network) => network.node_addr_known(addr).await,
+            NodeNetwork::Offline { .. } => Err(NetworkError::Offline),
+        }
     }
 
     /// Allows all sync sessions with the given node.
@@ -769,16 +832,6 @@ impl Node {
     /// calling this method after each process restart.
     pub async fn topic_block(&self, node_id: NodeId, topic: Topic) {
         self.sync_block_list.block_topic(node_id, topic).await;
-    }
-
-    /// Inserts a node address into the local address book.
-    pub async fn insert_node_addr(&self, addr: EndpointAddr) -> Result<(), NetworkError> {
-        self.network.insert_node_addr(addr).await
-    }
-
-    /// Returns true if the address book already has an entry for this endpoint.
-    pub async fn node_addr_known(&self, addr: &EndpointAddr) -> Result<bool, NetworkError> {
-        self.network.node_addr_known(addr).await
     }
 }
 
@@ -819,6 +872,7 @@ pub enum AckPolicy {
 pub(crate) struct Config {
     pub ack_policy: AckPolicy,
     pub network: NetworkConfig,
+    pub offline: bool,
 }
 
 /// Error occurred when spawning network or store processes.
@@ -830,6 +884,9 @@ pub enum SpawnError {
 
     #[error(transparent)]
     Store(#[from] SqliteError),
+
+    #[error("network settings were configured on an offline node")]
+    OfflineNetworkConfig,
 
     #[error(transparent)]
     SpacesManager(#[from] SpacesManagerError),

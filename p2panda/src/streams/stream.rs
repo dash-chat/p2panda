@@ -103,28 +103,37 @@ const IMPORT_BUFFER_SIZE: usize = 16;
 pub(crate) async fn processed_stream<M>(
     topic: Topic,
     ack_policy: AckPolicy,
-    sync_handle: SyncHandle<Operation, TopicLogSyncEvent<Extensions>>,
+    sync_handle: Option<SyncHandle<Operation, TopicLogSyncEvent<Extensions>>>,
     store: SqliteStore,
     forge: OperationForge,
     pipeline: Pipeline,
     event_tx: broadcast::Sender<SystemEvent>,
     from: StreamFrom,
+    custom_cursor_name: Option<String>,
 ) -> Result<(StreamPublisher<M>, StreamSubscription<M>), CreateStreamError>
 where
     M: Serialize + for<'a> Deserialize<'a> + Send + 'static,
 {
-    let acked = Acked::new(store.clone(), topic);
+    let acked = match custom_cursor_name {
+        Some(cursor_name) => Acked::from_name(store.clone(), topic, cursor_name),
+        None => Acked::new(store.clone(), topic),
+    };
 
-    // Sync handle is used on the publisher and when importing from external streams.
+    // Sync handle is used on the publisher and when importing from external streams. An offline
+    // node has no sync handle.
     //
     // TODO: Event delivery should be handled outside of this and be connected to the pipeline via
     // an ingress.
-    let sync_handle = Arc::new(sync_handle);
+    let sync_handle = sync_handle.map(Arc::new);
 
-    let mut sync_stream = sync_handle
-        .subscribe()
-        .await
-        .map_err(|err| CreateStreamError(err.to_string()))?;
+    let mut sync_stream = match &sync_handle {
+        Some(sync_handle) => sync_handle
+            .subscribe()
+            .await
+            .map_err(|err| CreateStreamError(err.to_string()))?
+            .boxed(),
+        None => futures_util::stream::pending().boxed(),
+    };
 
     // Channel to send processed events to the application-layer.
     let (app_tx, app_rx) = mpsc::channel::<StreamEvent<M>>(BUFFER_SIZE);
@@ -334,7 +343,7 @@ where
                             Source::LocalStore,
                             topic,
                             &pipeline,
-                            Some(&sync_handle),
+                            sync_handle.as_ref(),
                             None
                         ).await;
 
@@ -367,7 +376,7 @@ where
                                     Source::ExternalStream { session_id },
                                     topic,
                                     &pipeline,
-                                    Some(&sync_handle),
+                                    sync_handle.as_ref(),
                                     None
                                 ).await;
 
@@ -385,12 +394,15 @@ where
                     Some((input, signal_tx)) = import_local_rx.recv() => {
                         match input {
                             EgressDestination::Delivery(operation) => {
-                                let operation_id = operation.hash();
-                                if sync_handle.publish(operation).is_err() {
-                                    warn!(
-                                        %operation_id,
-                                        "failed sending operation on sync handle"
-                                    )
+                                // An offline node has no sync handle, delivery is a no-op then.
+                                if let Some(sync_handle) = &sync_handle {
+                                    let operation_id = operation.hash();
+                                    if sync_handle.publish(operation).is_err() {
+                                        warn!(
+                                            %operation_id,
+                                            "failed sending operation on sync handle"
+                                        )
+                                    }
                                 }
 
                                 let _ = signal_tx.send(());

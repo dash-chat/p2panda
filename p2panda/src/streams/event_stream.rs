@@ -50,19 +50,12 @@ pub type EventStream = Pin<Box<dyn Stream<Item = SystemEvent> + Send + Unpin + '
 pub(crate) fn event_stream(
     system_events: broadcast::Receiver<SystemEvent>,
     sync_block_list_events: broadcast::Receiver<SyncBlockListEvent>,
-    discovery_events: broadcast::Receiver<DiscoveryEvent>,
+    discovery_events: Option<broadcast::Receiver<DiscoveryEvent>>,
 ) -> EventStream {
     let sync_block_stream = BroadcastStream::new(sync_block_list_events);
     let sync_block_stream: Pin<Box<dyn Stream<Item = SystemEvent> + Send>> = Box::pin(
         sync_block_stream
             .filter_map(|event| async { event.ok().map(SystemEvent::SyncAuthoriser) })
-            .boxed(),
-    );
-
-    let discovery_stream = BroadcastStream::new(discovery_events);
-    let discovery_stream: Pin<Box<dyn Stream<Item = SystemEvent> + Send>> = Box::pin(
-        discovery_stream
-            .filter_map(|event| async { event.ok().map(SystemEvent::Discovery) })
             .boxed(),
     );
 
@@ -72,8 +65,19 @@ pub(crate) fn event_stream(
 
     let mut stream_set = SelectAll::new();
     stream_set.push(sync_block_stream);
-    stream_set.push(discovery_stream);
     stream_set.push(system_events_stream);
+
+    // An offline node has no discovery source, so `discovery_events` is omitted in that case.
+    if let Some(discovery_events) = discovery_events {
+        let discovery_stream = BroadcastStream::new(discovery_events);
+        let discovery_stream: Pin<Box<dyn Stream<Item = SystemEvent> + Send>> = Box::pin(
+            discovery_stream
+                .filter_map(|event| async { event.ok().map(SystemEvent::Discovery) })
+                .boxed(),
+        );
+
+        stream_set.push(discovery_stream);
+    }
 
     Box::pin(stream_set)
 }
