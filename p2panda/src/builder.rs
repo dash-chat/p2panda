@@ -11,7 +11,7 @@ use p2panda_net::{NetworkId, NodeId};
 use p2panda_store::SqliteStore;
 use p2panda_store::sqlite::{SqlitePool, SqliteStoreBuilder};
 
-use crate::network::MdnsDiscoveryMode;
+use crate::network::{MdnsDiscoveryMode, NetworkConfig};
 use crate::node::{AckPolicy, Config, SpawnError};
 use crate::{Credentials, Node};
 
@@ -22,6 +22,7 @@ use crate::{Credentials, Node};
 pub struct NodeBuilder {
     credentials: Option<Credentials>,
     config: Config,
+    network_configured: bool,
     store_options: StoreBuilderOptions,
 }
 
@@ -31,8 +32,14 @@ impl NodeBuilder {
         NodeBuilder {
             credentials: None,
             config: Config::default(),
+            network_configured: false,
             store_options: StoreBuilderOptions::default(),
         }
+    }
+
+    fn network_config_mut(&mut self) -> &mut NetworkConfig {
+        self.network_configured = true;
+        &mut self.config.network
     }
 
     /// Sets the credentials consisting of a signing- and identity secret.
@@ -121,7 +128,7 @@ impl NodeBuilder {
     /// If no relay is given other nodes can only connect to us if a directly-reachable IP address
     /// is available and known to them.
     pub fn relay_url(mut self, url: RelayUrl) -> Self {
-        self.config.network.relay_urls.insert(url);
+        self.network_config_mut().relay_urls.insert(url);
         self
     }
 
@@ -144,8 +151,7 @@ impl NodeBuilder {
     pub fn bootstrap(mut self, node_id: NodeId, relay_url: RelayUrl) -> Self {
         let endpoint_addr =
             EndpointAddr::new(from_verifying_key(node_id)).with_relay_url(relay_url);
-        self.config
-            .network
+        self.network_config_mut()
             .bootstraps
             .insert((node_id, TrustedTransportInfo::from(endpoint_addr)));
         self
@@ -158,7 +164,7 @@ impl NodeBuilder {
     /// If left unset, the mode defaults to active and this node will actively advertise it's
     /// endpoint address on the local area network.
     pub fn mdns_mode(mut self, mode: MdnsDiscoveryMode) -> Self {
-        self.config.network.mdns_mode = mode;
+        self.network_config_mut().mdns_mode = mode;
         self
     }
 
@@ -166,7 +172,7 @@ impl NodeBuilder {
     ///
     /// If left unset, the address defaults to `0.0.0.0`.
     pub fn bind_ip_v4(mut self, ip: Ipv4Addr) -> Self {
-        self.config.network.iroh.bind_ip_v4 = ip;
+        self.network_config_mut().iroh.bind_ip_v4 = ip;
         self
     }
 
@@ -175,7 +181,7 @@ impl NodeBuilder {
     /// If left unset, the port defaults to `0` which results in a random free port being chosen.
     /// If the given port is already in use, a random port will be chosen as a fallback.
     pub fn bind_port_v4(mut self, port: u16) -> Self {
-        self.config.network.iroh.bind_port_v4 = port;
+        self.network_config_mut().iroh.bind_port_v4 = port;
         self
     }
 
@@ -183,7 +189,7 @@ impl NodeBuilder {
     ///
     /// If left unset, the address defaults to `[::]`.
     pub fn bind_ip_v6(mut self, ip: Ipv6Addr) -> Self {
-        self.config.network.iroh.bind_ip_v6 = ip;
+        self.network_config_mut().iroh.bind_ip_v6 = ip;
         self
     }
 
@@ -192,7 +198,7 @@ impl NodeBuilder {
     /// If left unset, the port defaults to `0` which results in a random free port being chosen.
     /// If the given port is already in use, a random port will be chosen as a fallback.
     pub fn bind_port_v6(mut self, port: u16) -> Self {
-        self.config.network.iroh.bind_port_v6 = port;
+        self.network_config_mut().iroh.bind_port_v6 = port;
         self
     }
 
@@ -201,7 +207,7 @@ impl NodeBuilder {
     /// This allows fine-tuning of the random walk protocol, including the number of walkers and
     /// their reset probability.
     pub fn discovery_config(mut self, config: DiscoveryConfig) -> Self {
-        self.config.network.discovery = config;
+        self.network_config_mut().discovery = config;
         self
     }
 
@@ -210,12 +216,28 @@ impl NodeBuilder {
     /// This allows fine-tuning of swarm membership and gossip broadcast parameters, as well as the
     /// maximum message size for broadcast. The default maximum message size is 4096 bytes.
     pub fn gossip_config(mut self, config: GossipConfig) -> Self {
-        self.config.network.gossip = config;
+        self.network_config_mut().gossip = config;
+        self
+    }
+
+    /// Spawns the node without a networking layer.
+    ///
+    /// An offline node keeps its network identity (settable via `network_id`) but binds no sockets
+    /// and discovers no peers.
+    ///
+    /// Configuring any live-network setting (relay, bootstrap, mDNS, bind address, discovery or
+    /// gossip) on an offline builder is a contradiction and causes `spawn()` to fail with
+    /// [`SpawnError::OfflineNetworkConfig`].
+    pub fn offline(mut self) -> Self {
+        self.config.offline = true;
         self
     }
 
     /// Spawns the `Node`.
     pub async fn spawn(self) -> Result<Node, SpawnError> {
+        if self.config.offline && self.network_configured {
+            return Err(SpawnError::OfflineNetworkConfig);
+        }
         let credentials = self.credentials.unwrap_or_default();
         let store = match self.store_options {
             StoreBuilderOptions::Memory => {
