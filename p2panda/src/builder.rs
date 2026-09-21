@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 use std::net::{Ipv4Addr, Ipv6Addr};
+use std::time::Duration;
 
 use p2panda_net::addrs::TrustedTransportInfo;
 use p2panda_net::discovery::DiscoveryConfig;
@@ -193,6 +194,18 @@ impl NodeBuilder {
     /// If the given port is already in use, a random port will be chosen as a fallback.
     pub fn bind_port_v6(mut self, port: u16) -> Self {
         self.config.network.iroh.bind_port_v6 = port;
+        self
+    }
+
+    /// Period of inactivity before a keep-alive packet is sent on a connection.
+    pub fn keep_alive_interval(mut self, interval: Duration) -> Self {
+        self.config.network.iroh.keep_alive_interval = interval;
+        self
+    }
+
+    /// Period of inactivity after which a connection is considered dead and closed.
+    pub fn max_idle_timeout(mut self, timeout: Duration) -> Self {
+        self.config.network.iroh.max_idle_timeout = timeout;
         self
     }
 

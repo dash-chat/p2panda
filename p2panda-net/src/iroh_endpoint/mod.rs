@@ -7,7 +7,6 @@ mod builder;
 mod config;
 mod discovery;
 mod hooks;
-mod os_resolver;
 #[cfg(feature = "supervisor")]
 mod supervisor;
 #[cfg(test)]

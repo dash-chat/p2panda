@@ -263,6 +263,21 @@ impl AddressBook {
         Ok(())
     }
 
+    /// Forgets the last failed connection attempt of every node, so none of them is considered
+    /// stale anymore.
+    ///
+    /// Use this when our own connectivity changed: attempts that failed before say nothing about
+    /// whether other nodes are reachable now.
+    pub async fn forget_failed_connections(&self) -> Result<(), AddressBookError> {
+        let inner = self.inner.read().await;
+        cast!(
+            inner.actor_ref.as_ref().expect("actor spawned in builder"),
+            ToAddressBookActor::ForgetFailedConnections
+        )
+        .map_err(Box::new)?;
+        Ok(())
+    }
+
     pub(crate) async fn store(&self) -> Result<SqliteStore, AddressBookError> {
         let inner = self.inner.read().await;
         let result = call!(
