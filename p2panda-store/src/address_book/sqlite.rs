@@ -219,6 +219,23 @@ where
         .map(|v| v.into_iter().map(|(NodeInfoDecode(n),)| n).collect())
     }
 
+    async fn stale_node_infos(&self) -> Result<Vec<N>, Self::Error> {
+        query_as::<_, (NodeInfoDecode<N>,)>(
+            "
+                SELECT
+                    node_info
+                FROM
+                    node_infos_v1
+                WHERE
+                    stale = TRUE
+                ",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(SqliteError::Sqlite)
+        .map(|v| v.into_iter().map(|(NodeInfoDecode(n),)| n).collect())
+    }
+
     async fn all_nodes_len(&self) -> Result<usize, Self::Error> {
         let count: i64 = self
             .execute(async |pool| {

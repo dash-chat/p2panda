@@ -54,6 +54,40 @@ async fn ignore_stale_entries() {
 }
 
 #[tokio::test]
+async fn query_stale_entries() {
+    let store = SqliteStore::temporary().await;
+
+    let permit = store.begin().await.unwrap();
+
+    let active_node_info = TestNodeInfo::new(SigningKey::generate().verifying_key());
+    store
+        .insert_node_info(active_node_info.clone())
+        .await
+        .unwrap();
+
+    let stale_node_info = TestNodeInfo::new(SigningKey::generate().verifying_key()).stale();
+    store
+        .insert_node_info(stale_node_info.clone())
+        .await
+        .unwrap();
+
+    store.commit(permit).await.unwrap();
+
+    assert_eq!(
+        <SqliteStore as AddressBookStore<TestNodeId, TestNodeInfo>>::all_node_infos(&store)
+            .await
+            .unwrap(),
+        vec![active_node_info]
+    );
+    assert_eq!(
+        <SqliteStore as AddressBookStore<TestNodeId, TestNodeInfo>>::stale_node_infos(&store)
+            .await
+            .unwrap(),
+        vec![stale_node_info]
+    );
+}
+
+#[tokio::test]
 async fn set_and_query_topics() {
     let store = SqliteStore::temporary().await;
 
