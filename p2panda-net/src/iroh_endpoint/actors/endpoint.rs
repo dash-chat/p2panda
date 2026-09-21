@@ -24,6 +24,7 @@ use crate::iroh_endpoint::actors::connection::{
 use crate::iroh_endpoint::actors::is_globally_reachable_endpoint;
 use crate::iroh_endpoint::config::IrohConfig;
 use crate::iroh_endpoint::discovery::AddressBookDiscovery;
+use crate::iroh_endpoint::hooks::EndpointHooksList;
 use crate::utils::{ShortFormat, from_signing_key};
 use crate::{NetworkId, NodeId, ProtocolId, hash_protocol_id_with_network_id};
 
@@ -75,6 +76,7 @@ pub struct IrohState {
     config: IrohConfig,
     relay_map: iroh::RelayMap,
     address_book: AddressBook,
+    hooks: EndpointHooksList,
     endpoint: Option<iroh::Endpoint>,
     protocols: ProtocolMap,
     accept_handle: Option<JoinHandle<()>>,
@@ -88,6 +90,7 @@ pub type IrohEndpointArgs = (
     IrohConfig,
     iroh::RelayMap,
     AddressBook,
+    EndpointHooksList,
 );
 
 #[derive(Default)]
@@ -105,7 +108,7 @@ impl ThreadLocalActor for IrohEndpoint {
         myself: ActorRef<Self::Msg>,
         args: Self::Arguments,
     ) -> Result<Self::State, ActorProcessingErr> {
-        let (network_id, signing_key, config, relay_map, address_book) = args;
+        let (network_id, signing_key, config, relay_map, address_book, hooks) = args;
 
         // Automatically bind iroh endpoint after actor start.
         myself.send_message(ToIrohEndpoint::Bind)?;
@@ -116,6 +119,7 @@ impl ThreadLocalActor for IrohEndpoint {
             config,
             relay_map,
             address_book,
+            hooks,
             endpoint: None,
             protocols: Arc::default(),
             accept_handle: None,
@@ -190,6 +194,7 @@ impl ThreadLocalActor for IrohEndpoint {
                     .address_lookup(address_book_discovery)
                     .secret_key(from_signing_key(state.signing_key.clone()))
                     .transport_config(quic_transport_config)
+                    .hooks(state.hooks.clone())
                     .bind_addr(socket_address_v4)?
                     .bind_addr(socket_address_v6)?
                     .bind()

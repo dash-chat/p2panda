@@ -326,11 +326,8 @@ impl ThreadLocalActor for AddressBookActor {
             }
             ToAddressBookActor::ForgetFailedConnections => {
                 let stale_node_infos: Vec<NodeInfo> =
-                    AddressBookStore::<NodeId, NodeInfo>::all_node_infos(&state.store)
-                        .await?
-                        .into_iter()
-                        .filter(|node_info| node_info.metrics.is_stale())
-                        .collect();
+                    AddressBookStore::<NodeId, NodeInfo>::all_stale_node_infos(&state.store)
+                        .await?;
 
                 tx!(state.store, {
                     for mut node_info in stale_node_infos {

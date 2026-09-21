@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::net::{Ipv4Addr, Ipv6Addr};
 
-use p2panda_core::{Body, Hash, Header, Operation, SigningKey, Topic, VerifyingKey};
+use p2panda_core::{Body, Hash, Header, Operation, SeqNum, SigningKey, Topic, VerifyingKey};
 use p2panda_store::logs::LogStore;
 use p2panda_store::operations::OperationStore;
 use p2panda_store::topics::TopicStore;
@@ -275,16 +275,11 @@ impl TestClient {
     ) -> (Header<()>, Vec<u8>, Body) {
         let (header, header_bytes, body) = self.create_operation_no_insert(body, log_id).await;
 
-        let id = header.hash();
-        let operation = Operation {
-            hash: header.hash(),
-            header: header.clone(),
-            body: Some(body.to_owned()),
-        };
+        let operation = Operation::from_parts(header.clone(), Some(body.to_owned()));
 
         tx_unwrap!(&self.store, {
             self.store
-                .insert_operation(&id, &operation, &log_id)
+                .insert_operation(&operation.hash, &operation, &log_id)
                 .await
                 .unwrap();
         });
@@ -299,21 +294,15 @@ impl TestClient {
         log_id: u64,
     ) -> (Header<()>, Vec<u8>, Body) {
         let (header, header_bytes, body) = tx_unwrap!(&self.store, {
-            let (seq_num, backlink) = <SqliteStore as LogStore<
-                Operation<TestExtensions>,
-                VerifyingKey,
-                u64,
-                u64,
-                p2panda_core::Hash,
-            >>::get_latest_entry_tx(
-                &self.store, &self.signing_key.verifying_key(), &log_id
-            )
-            .await
-            .unwrap()
-            .map(|operation| (operation.header.seq_num + 1, Some(operation.hash)))
-            .unwrap_or((0, None));
+            let (seq_num, backlink) = self
+                .store
+                .get_latest_entry_tx(&self.signing_key.verifying_key(), &log_id)
+                .await
+                .unwrap()
+                .map(|operation| (operation.header.seq_num + 1, Some(operation.hash)))
+                .unwrap_or((0, None));
 
-            create_operation(&self.signing_key, body, seq_num, seq_num, backlink)
+            create_operation(&self.signing_key, body, seq_num, backlink)
         });
 
         (header, header_bytes, body)
@@ -334,26 +323,18 @@ impl TestClient {
 pub fn create_operation(
     signing_key: &SigningKey,
     body: &[u8],
-    seq_num: u64,
-    timestamp: u64,
+    seq_num: SeqNum,
     backlink: Option<Hash>,
 ) -> (Header<TestExtensions>, Vec<u8>, Body) {
-    let body = Body::new(body);
+    let body = Body::from_bytes(body);
 
-    let mut header = Header::<()> {
-        version: 1,
-        verifying_key: signing_key.verifying_key(),
-        signature: None,
-        payload_size: body.size(),
-        payload_hash: Some(body.hash()),
-        timestamp: timestamp.into(),
-        seq_num,
-        backlink,
-        extensions: (),
-    };
+    let header = Header::builder()
+        .seq_num(seq_num)
+        .backlink(backlink)
+        .body(&body)
+        .build(signing_key, ());
 
-    header.sign(signing_key);
-    let header_bytes = header.to_bytes();
+    let header_bytes = header.encode();
 
     (header, header_bytes, body)
 }

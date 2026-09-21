@@ -7,22 +7,19 @@
 mod event_stream;
 mod session_map;
 
-pub use event_stream::ManagerEventStream;
-use p2panda_store::topics::TopicStore;
-pub use session_map::SessionTopicMap;
-
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::hash::Hash as StdHash;
 use std::marker::PhantomData;
 use std::pin::Pin;
 
-use futures::channel::mpsc;
-use futures::future::ready;
-use futures::stream::SelectAll;
-use futures::{Sink, SinkExt, Stream, StreamExt};
-use p2panda_core::{Extensions, Hash, LogId, Operation, VerifyingKey};
+use futures_channel::mpsc;
+use futures_util::future::ready;
+use futures_util::sink::{Sink, SinkExt};
+use futures_util::stream::{SelectAll, Stream, StreamExt};
+use p2panda_core::{AnyOperation, Extensions, Hash, LogId, Operation, SeqNum, VerifyingKey};
 use p2panda_store::logs::LogStore;
+use p2panda_store::topics::TopicStore;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::sync::broadcast;
@@ -36,6 +33,9 @@ use crate::protocols::{TopicLogSync, TopicLogSyncError, TopicLogSyncEvent};
 use crate::traits::Manager;
 use crate::{FromSync, SessionConfig, ToSync};
 
+pub use event_stream::ManagerEventStream;
+pub use session_map::SessionTopicMap;
+
 static CHANNEL_BUFFER: usize = 1028;
 
 pub type ToTopicSync<E> = ToSync<Operation<E>>;
@@ -48,7 +48,7 @@ pub type ToTopicSync<E> = ToSync<Operation<E>>;
 ///
 /// A handle can be acquired to a sync session via the session_handle method for sending any live
 /// mode operations to a specific session. It's expected that users map sessions (by their id) to
-/// any topic subscriptions in order to understand the correct mappings.  
+/// any topic subscriptions in order to understand the correct mappings.
 ///
 /// There are two points where message deduplication occurs; 1) per-subscription deduplication of
 /// received operations across all sessions for this manager occurs in the event stream 2)
@@ -104,7 +104,7 @@ where
 impl<T, S, L, E> Manager<T> for TopicSyncManager<T, S, L, E>
 where
     T: Clone + Debug + Eq + StdHash + Serialize + for<'a> Deserialize<'a> + Send + 'static,
-    S: LogStore<Operation<E>, VerifyingKey, L, u64, Hash>
+    S: LogStore<AnyOperation, VerifyingKey, L, SeqNum, Hash>
         + TopicStore<T, VerifyingKey, L>
         + Clone
         + Send
@@ -240,15 +240,14 @@ mod tests {
     use std::collections::BTreeMap;
     use std::time::Duration;
 
-    use assert_matches::assert_matches;
-    use futures::channel::mpsc;
-    use futures::{SinkExt, StreamExt};
+    use futures_channel::mpsc;
+    use futures_util::{SinkExt, StreamExt};
     use p2panda_core::test_utils::setup_logging;
     use p2panda_core::{Body, Operation, Topic};
     use p2panda_store::SqliteStore;
 
     use crate::protocols::TopicLogSyncEvent;
-    use crate::test_utils::{Peer, TestTopicSyncManager, drain_stream, run_protocol};
+    use crate::test_utils::{Peer, TestLogId, TestTopicSyncManager, drain_stream, run_protocol};
     use crate::traits::{Manager, Protocol};
     use crate::{FromSync, SessionConfig, ToSync};
 
@@ -262,14 +261,14 @@ mod tests {
     async fn manager_e2e() {
         setup_logging();
 
-        const LOG_ID: u64 = 0;
+        const LOG_ID: TestLogId = 0;
         const SESSION_ID: u64 = 0;
 
         let topic = Topic::random();
 
         // Setup Peer A
         let mut peer_a = Peer::new(0).await;
-        let body = Body::new("Hello from Peer A".as_bytes());
+        let body = Body::from_bytes(b"Hello from Peer A");
         let _ = peer_a.create_operation(&body, LOG_ID).await;
         let logs = BTreeMap::from([(peer_a.id(), vec![LOG_ID])]);
         peer_a.associate(&topic, &logs).await;
@@ -277,7 +276,7 @@ mod tests {
 
         // Setup Peer B
         let mut peer_b = Peer::new(1).await;
-        let body = Body::new("Hello from Peer B".as_bytes());
+        let body = Body::from_bytes(b"Hello from Peer B");
         let _ = peer_b.create_operation(&body, LOG_ID).await;
         let logs = BTreeMap::from([(peer_b.id(), vec![LOG_ID])]);
         peer_b.associate(&topic, &logs).await;
@@ -320,35 +319,35 @@ mod tests {
             let event = event_stream_a.next().await.unwrap();
             assert_eq!(event.session_id(), 0);
             match index {
-                0 => assert_matches!(
+                0 => std::assert_matches!(
                     event,
                     FromSync {
                         event: TopicLogSyncEvent::SyncStarted { .. },
                         ..
                     }
                 ),
-                1 => assert_matches!(
+                1 => std::assert_matches!(
                     event,
                     FromSync {
                         event: TopicLogSyncEvent::OperationReceived { .. },
                         ..
                     }
                 ),
-                2 => assert_matches!(
+                2 => std::assert_matches!(
                     event,
                     FromSync {
                         event: TopicLogSyncEvent::SyncFinished { .. },
                         ..
                     }
                 ),
-                3 => assert_matches!(
+                3 => std::assert_matches!(
                     event,
                     FromSync {
                         event: TopicLogSyncEvent::LiveModeStarted,
                         ..
                     }
                 ),
-                4 => assert_matches!(
+                4 => std::assert_matches!(
                     event,
                     FromSync {
                         event: TopicLogSyncEvent::SessionFinished { .. },
@@ -363,7 +362,7 @@ mod tests {
         for index in 0..=5 {
             let event = event_stream_b.next().await.unwrap();
             match index {
-                0 => assert_matches!(
+                0 => std::assert_matches!(
                     event,
                     FromSync {
                         session_id: 0,
@@ -371,7 +370,7 @@ mod tests {
                         ..
                     }
                 ),
-                1 => assert_matches!(
+                1 => std::assert_matches!(
                     event,
                     FromSync {
                         session_id: 0,
@@ -379,7 +378,7 @@ mod tests {
                         ..
                     }
                 ),
-                2 => assert_matches!(
+                2 => std::assert_matches!(
                     event,
                     FromSync {
                         session_id: 0,
@@ -387,14 +386,14 @@ mod tests {
                         ..
                     }
                 ),
-                3 => assert_matches!(
+                3 => std::assert_matches!(
                     event,
                     FromSync {
                         event: TopicLogSyncEvent::LiveModeStarted,
                         ..
                     }
                 ),
-                4 => assert_matches!(
+                4 => std::assert_matches!(
                     event,
                     FromSync {
                         session_id: 0,
@@ -402,7 +401,7 @@ mod tests {
                         ..
                     }
                 ),
-                5 => assert_matches!(
+                5 => std::assert_matches!(
                     event,
                     FromSync {
                         event: TopicLogSyncEvent::SessionFinished { .. },
@@ -418,7 +417,7 @@ mod tests {
     async fn live_mode_three_peer_forwarding() {
         setup_logging();
 
-        const LOG_ID: u64 = 0;
+        const LOG_ID: TestLogId = 0;
         const SESSION_AB: u64 = 0;
         const SESSION_AC: u64 = 1;
         const SESSION_BA: u64 = 2;
@@ -428,19 +427,19 @@ mod tests {
 
         // Peer A
         let mut peer_a = Peer::new(0).await;
-        let body_a = Body::new("Hello from A".as_bytes());
+        let body_a = Body::from_bytes("Hello from A".as_bytes());
         let (peer_a_header_0, _) = peer_a.create_operation(&body_a, LOG_ID).await;
         let mut manager_a = TestTopicSyncManager::new(peer_a.store.clone());
 
         // Peer B
         let mut peer_b = Peer::new(1).await;
-        let body_b = Body::new("Hello from B".as_bytes());
+        let body_b = Body::from_bytes("Hello from B".as_bytes());
         let (peer_b_header_0, _) = peer_b.create_operation(&body_b, LOG_ID).await;
         let mut manager_b = TestTopicSyncManager::new(peer_b.store.clone());
 
         // Peer C
         let mut peer_c = Peer::new(2).await;
-        let body_c = Body::new("Hello from C".as_bytes());
+        let body_c = Body::from_bytes("Hello from C".as_bytes());
         let (peer_c_header_0, _) = peer_c.create_operation(&body_c, LOG_ID).await;
         let mut manager_c = TestTopicSyncManager::new(peer_c.store.clone());
 
@@ -522,9 +521,9 @@ mod tests {
         let mut handle_ba = manager_b.session_handle(SESSION_BA).await.unwrap();
         let mut handle_ca = manager_c.session_handle(SESSION_CA).await.unwrap();
 
-        let body_a = Body::new("Hello again from A".as_bytes());
-        let body_b = Body::new("Hello again from B".as_bytes());
-        let body_c = Body::new("Hello again from C".as_bytes());
+        let body_a = Body::from_bytes("Hello again from A".as_bytes());
+        let body_b = Body::from_bytes("Hello again from B".as_bytes());
+        let body_c = Body::from_bytes("Hello again from C".as_bytes());
         let (peer_a_header_1, _) = peer_a.create_operation(&body_a, LOG_ID).await;
         let (peer_b_header_1, _) = peer_b.create_operation(&body_b, LOG_ID).await;
         let (peer_c_header_1, _) = peer_c.create_operation(&body_c, LOG_ID).await;
@@ -562,17 +561,17 @@ mod tests {
                 tokio::select! {
                     Some(event) = event_stream_a.next() => {
                         if let TopicLogSyncEvent::OperationReceived { operation, .. } = event.event() {
-                            operations_a.push(operation.header().clone());
+                            operations_a.push(operation.header.clone());
                         }
                     }
                     Some(event) = event_stream_b.next() => {
                         if let TopicLogSyncEvent::OperationReceived { operation, .. } = event.event() {
-                            operations_b.push(operation.header().clone());
+                            operations_b.push(operation.header.clone());
                         }
                     }
                     Some(event) = event_stream_c.next() => {
                         if let TopicLogSyncEvent::OperationReceived { operation, .. } = event.event() {
-                            operations_c.push(operation.header().clone());
+                            operations_c.push(operation.header.clone());
                         }
                     }
                     else => tokio::time::sleep(Duration::from_millis(20)).await
@@ -599,14 +598,14 @@ mod tests {
 
     #[tokio::test]
     async fn non_blocking_manager_stream() {
-        const LOG_ID: u64 = 0;
+        const LOG_ID: TestLogId = 0;
         const SESSION_ID: u64 = 0;
 
         let topic = Topic::random();
 
         // Setup Peer A
         let mut peer_a = Peer::new(0).await;
-        let body = Body::new("Hello from Peer A".as_bytes());
+        let body = Body::from_bytes("Hello from Peer A".as_bytes());
         let _ = peer_a.create_operation(&body, LOG_ID).await;
         let logs = BTreeMap::from([(peer_a.id(), vec![LOG_ID])]);
         peer_a.associate(&topic, &logs).await;
@@ -622,7 +621,7 @@ mod tests {
 
         // Setup Peer B
         let mut peer_b = Peer::new(1).await;
-        let body = Body::new("Hello from Peer B".as_bytes());
+        let body = Body::from_bytes(b"Hello from Peer B");
         let _ = peer_b.create_operation(&body, LOG_ID).await;
         let logs = BTreeMap::from([(peer_b.id(), vec![LOG_ID])]);
         peer_b.associate(&topic, &logs).await;
@@ -658,11 +657,11 @@ mod tests {
         run_protocol(peer_a_session, peer_b_session).await.unwrap();
 
         // Assert Peer B's events.
-        let events = drain_stream(event_stream).await;
+        let events = drain_stream(event_stream);
         assert_eq!(events.len(), 6);
         for (index, event) in events.into_iter().enumerate() {
             match index {
-                0 => assert_matches!(
+                0 => std::assert_matches!(
                     event,
                     FromSync {
                         session_id: 0,
@@ -670,7 +669,7 @@ mod tests {
                         ..
                     }
                 ),
-                1 => assert_matches!(
+                1 => std::assert_matches!(
                     event,
                     FromSync {
                         session_id: 0,
@@ -678,7 +677,7 @@ mod tests {
                         ..
                     }
                 ),
-                2 => assert_matches!(
+                2 => std::assert_matches!(
                     event,
                     FromSync {
                         session_id: 0,
@@ -686,14 +685,14 @@ mod tests {
                         ..
                     }
                 ),
-                3 => assert_matches!(
+                3 => std::assert_matches!(
                     event,
                     FromSync {
                         event: TopicLogSyncEvent::LiveModeStarted,
                         ..
                     }
                 ),
-                4 => assert_matches!(
+                4 => std::assert_matches!(
                     event,
                     FromSync {
                         session_id: 0,
@@ -701,7 +700,7 @@ mod tests {
                         ..
                     }
                 ),
-                5 => assert_matches!(
+                5 => std::assert_matches!(
                     event,
                     FromSync {
                         event: TopicLogSyncEvent::SessionFinished { .. },

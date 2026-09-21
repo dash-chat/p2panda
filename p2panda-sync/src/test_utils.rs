@@ -3,10 +3,10 @@
 //! Test utilities.
 use std::collections::BTreeMap;
 
-use futures::{FutureExt, SinkExt, Stream, StreamExt};
-
-use futures::channel::mpsc;
-use p2panda_core::{Body, Hash, Header, Operation, SigningKey, Topic, VerifyingKey};
+use futures_channel::mpsc;
+use futures_util::{FutureExt, SinkExt, Stream, StreamExt};
+use p2panda_core::logs::Logs;
+use p2panda_core::{Body, Hash, Header, Operation, SeqNum, SigningKey, Topic, VerifyingKey};
 use p2panda_store::logs::LogStore;
 use p2panda_store::operations::OperationStore;
 use p2panda_store::topics::TopicStore;
@@ -19,24 +19,26 @@ use tokio::sync::broadcast;
 use crate::ToSync;
 use crate::manager::TopicSyncManager;
 use crate::protocols::{
-    LogSync, LogSyncError, LogSyncEvent, LogSyncMessage, Logs, TopicLogSync, TopicLogSyncError,
+    LogSync, LogSyncError, LogSyncEvent, LogSyncMessage, TopicLogSync, TopicLogSyncError,
     TopicLogSyncEvent, TopicLogSyncMessage,
 };
 use crate::traits::Protocol;
 
+pub type TestLogId = usize;
+pub type TestExtensions = TestLogId;
+
 // Types used in log sync protocol tests.
-pub type TestLogSyncMessage = LogSyncMessage<u64>;
-pub type TestLogSyncEvent = LogSyncEvent<()>;
-pub type TestLogSync = LogSync<u64, (), SqliteStore, TestLogSyncEvent>;
+pub type TestLogSyncMessage = LogSyncMessage<TestLogId>;
+pub type TestLogSyncEvent = LogSyncEvent<TestExtensions>;
+pub type TestLogSync = LogSync<TestLogId, TestExtensions, SqliteStore, TestLogSyncEvent>;
 pub type TestLogSyncError = LogSyncError;
 
 // Types used in topic log sync protocol tests.
-pub type TestTopicSyncMessage = TopicLogSyncMessage<u64, ()>;
-pub type TestTopicSyncEvent = TopicLogSyncEvent<()>;
-pub type TestTopicSync = TopicLogSync<Topic, SqliteStore, u64, ()>;
+pub type TestTopicSyncMessage = TopicLogSyncMessage<TestLogId>;
+pub type TestTopicSyncEvent = TopicLogSyncEvent<TestExtensions>;
+pub type TestTopicSync = TopicLogSync<Topic, SqliteStore, TestLogId, TestExtensions>;
 pub type TestTopicSyncError = TopicLogSyncError;
-
-pub type TestTopicSyncManager = TopicSyncManager<Topic, SqliteStore, u64, ()>;
+pub type TestTopicSyncManager = TopicSyncManager<Topic, SqliteStore, TestLogId, TestExtensions>;
 
 /// Peer abstraction used in tests.
 ///
@@ -68,7 +70,7 @@ impl Peer {
     ) -> (
         TestTopicSync,
         broadcast::Receiver<TestTopicSyncEvent>,
-        mpsc::Sender<ToSync<Operation<()>>>,
+        mpsc::Sender<ToSync<Operation<TestExtensions>>>,
     ) {
         let (event_tx, event_rx) = broadcast::channel(512);
         let (live_tx, live_rx) = mpsc::channel(512);
@@ -80,7 +82,7 @@ impl Peer {
     /// Return a log sync protocol.
     pub fn log_sync_protocol(
         &mut self,
-        logs: &Logs<u64>,
+        logs: &Logs<VerifyingKey, TestLogId>,
     ) -> (TestLogSync, broadcast::Receiver<TestLogSyncEvent>) {
         let (event_tx, event_rx) = broadcast::channel(512);
         let session = LogSync::new(self.store.clone(), logs.clone(), event_tx);
@@ -88,7 +90,11 @@ impl Peer {
     }
 
     /// Create and insert an operation to the store.
-    pub async fn create_operation(&mut self, body: &Body, log_id: u64) -> (Header<()>, Vec<u8>) {
+    pub async fn create_operation(
+        &mut self,
+        body: &Body,
+        log_id: TestLogId,
+    ) -> (Header<TestExtensions>, Vec<u8>) {
         let (header, header_bytes) = self.create_operation_no_insert(body, log_id).await;
 
         let id = header.hash();
@@ -112,29 +118,27 @@ impl Peer {
     pub async fn create_operation_no_insert(
         &mut self,
         body: &Body,
-        log_id: u64,
-    ) -> (Header<()>, Vec<u8>) {
-        let (seq_num, backlink) = <SqliteStore as LogStore<
-            Operation<()>,
-            VerifyingKey,
-            u64,
-            u64,
-            p2panda_core::Hash,
-        >>::get_latest_entry(
-            &self.store, &self.signing_key.verifying_key(), &log_id
-        )
-        .await
-        .unwrap()
-        .map(|operation| (operation.header.seq_num + 1, Some(operation.hash)))
-        .unwrap_or((0, None));
+        log_id: TestLogId,
+    ) -> (Header<TestExtensions>, Vec<u8>) {
+        let (seq_num, backlink) = self
+            .store
+            .get_latest_entry(&self.signing_key.verifying_key(), &log_id)
+            .await
+            .unwrap()
+            .map(|operation| (operation.header.seq_num + 1, Some(operation.hash)))
+            .unwrap_or((0, None));
 
         let (header, header_bytes) =
-            create_operation(&self.signing_key, body, seq_num, rand::random(), backlink);
+            create_operation(&self.signing_key, body, seq_num, backlink, log_id);
 
         (header, header_bytes)
     }
 
-    pub async fn associate(&mut self, topic: &Topic, logs: &BTreeMap<VerifyingKey, Vec<u64>>) {
+    pub async fn associate(
+        &mut self,
+        topic: &Topic,
+        logs: &BTreeMap<VerifyingKey, Vec<TestLogId>>,
+    ) {
         let permit = self.store.begin().await.unwrap();
         for (author, logs) in logs {
             for log_id in logs {
@@ -192,7 +196,7 @@ where
     Ok((result, remote_message_rx))
 }
 
-pub async fn drain_stream<S>(mut stream: S) -> Vec<S::Item>
+pub fn drain_stream<S>(mut stream: S) -> Vec<S::Item>
 where
     S: Stream + Unpin,
 {
@@ -207,22 +211,15 @@ where
 pub fn create_operation(
     signing_key: &SigningKey,
     body: &Body,
-    seq_num: u64,
-    timestamp: u64,
+    seq_num: SeqNum,
     backlink: Option<Hash>,
-) -> (Header<()>, Vec<u8>) {
-    let mut header = Header::<()> {
-        version: 1,
-        verifying_key: signing_key.verifying_key(),
-        signature: None,
-        payload_size: body.size(),
-        payload_hash: Some(body.hash()),
-        timestamp: timestamp.into(),
-        seq_num,
-        backlink,
-        extensions: (),
-    };
-    header.sign(signing_key);
-    let header_bytes = header.to_bytes();
+    log_id: TestLogId,
+) -> (Header<TestExtensions>, Vec<u8>) {
+    let header = Header::builder()
+        .body(body)
+        .seq_num(seq_num)
+        .backlink(backlink)
+        .build(signing_key, log_id);
+    let header_bytes = header.encode();
     (header, header_bytes)
 }

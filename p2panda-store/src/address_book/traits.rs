@@ -84,7 +84,12 @@ where
     fn node_topics(&self, id: &ID) -> impl Future<Output = Result<HashSet<Topic>, Self::Error>>;
 
     /// Returns a list of all known node informations.
+    ///
+    /// Node informations which have gone stale are not included.
     fn all_node_infos(&self) -> impl Future<Output = Result<Vec<N>, Self::Error>>;
+
+    /// Returns a list of all node informations which have gone stale.
+    fn all_stale_node_infos(&self) -> impl Future<Output = Result<Vec<N>, Self::Error>>;
 
     /// Returns the count of all known nodes.
     fn all_nodes_len(&self) -> impl Future<Output = Result<usize, Self::Error>>;

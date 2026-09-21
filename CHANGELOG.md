@@ -9,12 +9,128 @@ Highlights are marked with a pancake 🥞
 
 ## [Unreleased]
 
+### Added
+
+- net: Introduce an `Authoriser` for maintaining and enforcing allow- and blocklists [#1321](https://github.com/p2panda/p2panda/pull/1321)
+- node: API for promoting and demoting space members [#1311](https://github.com/p2panda/p2panda/pull/1311)
+- node: Allow graceful closure of sync sessions [#1307](https://github.com/p2panda/p2panda/pull/1307)
+- node: Associate key bundle, groups and spaces logs with log topic [#1264](https://github.com/p2panda/p2panda/pull/1264)
+- node: Automatically renew expired key-bundles and publish member messages more efficiently [#1337](https://github.com/p2panda/p2panda/pull/1337)
+- node: Cancel processed stream tasks on drop of stream handles [#1300](https://github.com/p2panda/p2panda/pull/1300)
+- node: Emit per-group and global groups events [#1313](https://github.com/p2panda/p2panda/pull/1313)
+- node: Encrypted spaces and groups management integration into high-level API [#1202](https://github.com/p2panda/p2panda/pull/1202)
+- node: Forward events resulting from local actions to app layer [#1290](https://github.com/p2panda/p2panda/pull/1290)
+- node: Handle spaces events when processing pipeline event [#1276](https://github.com/p2panda/p2panda/pull/1276)
+- node: Implement `Orderer` `Processor` for pipeline [#1262](https://github.com/p2panda/p2panda/pull/1262)
+- node: Integrate the `Authoriser` into the `Node`[#1321](https://github.com/p2panda/p2panda/pull/1321)
+- node: Membership change validation in Group API [#1336](https://github.com/p2panda/p2panda/pull/1336)
+- node: Membership change validation in Space API [#1292](https://github.com/p2panda/p2panda/pull/1292)
+- node: Task for repairing spaces [#1277](https://github.com/p2panda/p2panda/pull/1277)
+- spaces: Compute and return events from local methods [#1290](https://github.com/p2panda/p2panda/pull/1290)
+- spaces: Introduce local stream import [#1296](https://github.com/p2panda/p2panda/pull/1296)
+- spaces: Safe key bundle registration by cross-signing X3DH identity- and verifying-keys [#1332](https://github.com/p2panda/p2panda/pull/1332)
+- spaces: Support partial merge of auth state into a space [#1299](https://github.com/p2panda/p2panda/pull/1299)
+- spaces: Validate write authority when processing application messages [#1295](https://github.com/p2panda/p2panda/pull/1295)
+- store: Add `resolve_topics` method to `TopicStore` trait [#1261](https://github.com/p2panda/p2panda/pull/1261)
+- store: Introduce `ProcessorStore` for storing event metadata from p2panda pipeline [#1262](https://github.com/p2panda/p2panda/pull/1262)
+- store: Add method on TopicStore to get all topics - [#1388](https://github.com/p2panda/p2panda/pull/1388)
+- stream: Filter out spaces application messages from concurrently removed members [#1291](https://github.com/p2panda/p2panda/pull/1291)
+- stream: Hooks processor to register event callbacks in streaming pipeline [#1339](https://github.com/p2panda/p2panda/pull/1339)
+- stream: Move orderer processor from node to stream [#1312](https://github.com/p2panda/p2panda/pull/1312)
+- stream: Out-of-order buffer for validating & inserting operations [#1402](https://github.com/p2panda/p2panda/pull/1402)
+- stream: Add `validate_operation` method checking against store [#1417](https://github.com/p2panda/p2panda/pull/1417)
+- node: ConnectionAuthoriserHook updating authoriser based on space membership [#1359](https://github.com/p2panda/p2panda/pull/1359)
+- node: E2EE CLI chat example using spaces API [#1288](https://github.com/p2panda/p2panda/pull/1288)
+- sync: `api` module with useful methods to hack your own sync protocols [#1393](https://github.com/p2panda/p2panda/pull/1393)
+- sync: Method for streaming log ranges from the store [#1393](https://github.com/p2panda/p2panda/pull/1393)
+- sync: Method to resolve log heights from topic [#1405](https://github.com/p2panda/p2panda/pull/1405)
+- sync: Re-export -stream ingest_operation in `api` module [#1406](https://github.com/p2panda/p2panda/pull/1406)
+
 ### Changed
 
-- Update to iroh `v1.0.0-rc.1` [#1191](https://github.com/p2panda/p2panda/pull/1191)
-- Update to iroh `v1.0.0` [#1238](https://github.com/p2panda/p2panda/pull/1238)
-- Set MSRV to `1.94` [#1191](https://github.com/p2panda/p2panda/pull/1191)
+- core: Use `Signer` trait instead of `SigningKey` [#1202](https://github.com/p2panda/p2panda/pull/1202)
+- node: Increase stream buffer size [#1360](https://github.com/p2panda/p2panda/pull/1360)
+- node: Make `Group` sendsync [#1306](https://github.com/p2panda/p2panda/pull/1306)
+- node: Move repair task out of stream [#1347](https://github.com/p2panda/p2panda/pull/1347)
+- node: Use random network ids in tests [#1360](https://github.com/p2panda/p2panda/pull/1360)
+- spaces: Only emit membership change events if local user is space member [#1304](https://github.com/p2panda/p2panda/pull/1304)
+- spaces: Remove auth resolver generic parameter [#1298](https://github.com/p2panda/p2panda/pull/1298)
+- store: sqlx 0.9.0, use safer query builder [#1322](https://github.com/p2panda/p2panda/pull/1322)
+- core: Infallible conversion from Operation<E> into AnyOperation [#1389](https://github.com/p2panda/p2panda/pull/1389)
+- store: Use `AnyOperation` on `LogStore` [#1391](https://github.com/p2panda/p2panda/pull/1391)
+- sync: Update examples to use new `api` module [#1413](https://github.com/p2panda/p2panda/pull/1413)
+
+### Fixes
+
+- node: Allow event processing to handle out-of-order buffering by separating i/o streams and preserve input ordering [#1271](https://github.com/p2panda/)
+- node: Unblock task tracker by introducing "pass-through" events coming from orderer [#1267](https://github.com/p2panda/p2panda/pull/1267)
+- spaces: Deterministic deserialization of `SpacesArgs` [#1264](https://github.com/p2panda/p2panda/pull/1264)
+
+## [0.7.1] - 21/08/2026
+
+### Added
+
+- net: Support bearer authentication for iroh relays [#1361](https://github.com/p2panda/p2panda/pull/1361)
+
+### Changed
+
+- core: New forwards-compatible, safer and faster API to create, encode and decode operations [#1200](https://github.com/p2panda/p2panda/pull/1200)
+- core: Enforce strict, canonical CBOR when decoding headers and their extensions [#1374](https://github.com/p2panda/p2panda/pull/1374)
+- core: Remove `Extension` trait [#1370](https://github.com/p2panda/p2panda/pull/1370)
+- sync: Use Borrow<GroupsArgs> in groups processor instead [#1370](https://github.com/p2panda/p2panda/pull/1370)
+- net: Update ractor to v0.16.2 [#1324](https://github.com/p2panda/p2panda/pull/1324)
+- net: Update iroh to v1.0.3 [#1375](https://github.com/p2panda/p2panda/pull/1375)
+- sync: Tracing for sync state machine using instrument span [#1289](https://github.com/p2panda/p2panda/pull/1289)
+- auth: Replace `IdentityHandle` and `OperationId` with traits from `p2panda-core` [#1193](https://github.com/p2panda/p2panda/pull/1193)
+
+### Fixed
+
+- encryption: Do not require pre-key bundle when initialising TwoParty state as a recipient [#1297](https://github.com/p2panda/p2panda/pull/1297)
+- encryption: Update hpke-rs to v0.7.0 to fix RUSTSEC [#1309](https://github.com/p2panda/p2panda/pull/1309)
+
+## [0.7.0] - 07/07/2026
+
+### Added
+
+- auth: More methods (`traverse_members`, `groups`) to traverse and filter graph [#1242](https://github.com/p2panda/p2panda/pull/1242)
 - auth: Allow ordinary members to remove themselves from group [#1234](https://github.com/p2panda/p2panda/pull/1234)
+- store: Introduce SQLite implementations of `KeySecretsStore` and `KeyRegistryStore` [#1230](https://github.com/p2panda/p2panda/pull/1230)
+- store: SQLite implementations of spaces stores [#1241](https://github.com/p2panda/p2panda/pull/1241)
+- core: Provenance trait to get author & verify [#1254](https://github.com/p2panda/p2panda/pull/1254)
+- node: Future-proof extensions format in Node API [#1155](https://github.com/p2panda/p2panda/pull/1155)
+- ci: Improve GitHub actions: Use cargo-deny and cargo-hack, adjust schedule [#1233](https://github.com/p2panda/p2panda/pull/1233)
+- stream: Introduce spaces processor [#1218](https://github.com/p2panda/p2panda/pull/1218)
+
+### Changed
+
+- core: Core header type changes & stabilisation
+    - `payload_size` and `seq_num` from `u64` to `u32` [#1194](https://github.com/p2panda/p2panda/pull/1194)
+    - `version` from `u64` to `u16` [#1194](https://github.com/p2panda/p2panda/pull/1194)
+    - Remove `timestamp` [#1195](https://github.com/p2panda/p2panda/pull/1195)
+    - Fix header encoding for ZST extensions [#1196](https://github.com/p2panda/p2panda/pull/1196)
+- net: Update to iroh `v1.0.0-rc.1` [#1191](https://github.com/p2panda/p2panda/pull/1191)
+- net: Update to iroh `v1.0.0` [#1238](https://github.com/p2panda/p2panda/pull/1238)
+- net: Use framed postcard codec instead of CBOR for wire protocols [#1198](https://github.com/p2panda/p2panda/pull/1198)
+- store: Reduce generics, remove serde from types [#1254](https://github.com/p2panda/p2panda/pull/1254)
+- spaces: Only return events when calling Manager::process [#1216](https://github.com/p2panda/p2panda/pull/1216)
+- spaces: Don't sync all spaces when group membership changes [#1216](https://github.com/p2panda/p2panda/pull/1216)
+- spaces: Adjust all "command" methods to not persist state locally [#1216](https://github.com/p2panda/p2panda/pull/1216)
+- spaces: Replace SpacesMessage trait with Borrow<SpacesArgs> [#1217](https://github.com/p2panda/p2panda/pull/1217)
+- spaces: Move top-level M generic to Manager::process<M>(..) [#1229](https://github.com/p2panda/p2panda/pull/1229)
+- stream: Return input with error in orderer processor [#1249](https://github.com/p2panda/p2panda/pull/1249)
+- spaces: Use new traits and SQLite stores in spaces [#1245](https://github.com/p2panda/p2panda/pull/1245)
+- chore: Set MSRV to `1.94` [#1191](https://github.com/p2panda/p2panda/pull/1191)
+- chore: Set MSRV to `1.96` [#1205](https://github.com/p2panda/p2panda/pull/1205)
+- chore: Use assert_matches!() instead of assert!(matches!()) [#1205](https://github.com/p2panda/p2panda/pull/1205)
+
+### Fixed
+
+- encryption: Update hpke-rs to 0.6.1 to fix RUSTSEC [#1233](https://github.com/p2panda/p2panda/pull/1233)
+- spaces: Fix generics in MessageStore and MemoryStore [#1229](https://github.com/p2panda/p2panda/pull/1229)
+- ci: Check for unused mut and async, fix affected methods [#1163](https://github.com/p2panda/p2panda/pull/1163)
+- net: Return existing rx on call to sync manager subscribe [#1269](https://github.com/p2panda/p2panda/pull/1269)
+- store: Faulty configuration for in-memory SQLite which caused dropped databases [#1258](https://github.com/p2panda/p2panda/pull/1258)
+- store: Do not return stale node infos in address book store [#1285](https://github.com/p2panda/p2panda/pull/1285)
 
 ## [0.6.1] - 22/05/2026
 
@@ -26,6 +142,7 @@ Highlights are marked with a pancake 🥞
 ### Changed
 
 - Deduplicate `setup_logging` test utility [#1178](https://github.com/p2panda/p2panda/pull/1178)
+- Refactor the groups processor to use the `Processor` trait [#1174](https://github.com/p2panda/p2panda/pull/1174)
 
 ### Fixed
 
@@ -101,14 +218,14 @@ Highlights are marked with a pancake 🥞
 
 ## [0.5.2] - 09/03/2026
 
+### Changed
+
+- `p2panda-auth` remove high-level API and orderer generic [#1030](https://github.com/p2panda/p2panda/pull/1030)A
+
 ### Fixed
 
 - Fix SQLite store handling of `previous` hashes [#1051](https://github.com/p2panda/p2panda/pull/1051)
 - Fix missing gossip events in sync manager [#988](https://github.com/p2panda/p2panda/pull/988)
-
-### Changed
-
-- `p2panda-auth` remove high-level API and orderer generic [#1030](https://github.com/p2panda/p2panda/pull/1030)
 
 ## [0.5.1] - 09/02/2026
 
@@ -250,7 +367,9 @@ Highlights are marked with a pancake 🥞
 
 Version `v0.1.0` represents the first release of the new p2panda stack! You can find out more details by reading our [blog](https://p2panda.org/2024/12/06/p2panda-release.html).
 
-[unreleased]: https://github.com/p2panda/p2panda/compare/v0.6.1...HEAD
+[unreleased]: https://github.com/p2panda/p2panda/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/p2panda/p2panda/releases/tag/v0.7.1
+[0.7.0]: https://github.com/p2panda/p2panda/releases/tag/v0.6.1
 [0.6.1]: https://github.com/p2panda/p2panda/releases/tag/v0.6.1
 [0.6.0]: https://github.com/p2panda/p2panda/releases/tag/v0.6.0
 [0.5.2]: https://github.com/p2panda/p2panda/releases/tag/v0.5.2

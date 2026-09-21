@@ -1,6 +1,6 @@
 [package]
 name = "p2panda-auth"
-version = "0.6.1"
+version = "0.7.1"
 edition = "2024"
 authors = [
   "adz <x12@adz.garden>",
@@ -12,36 +12,33 @@ repository = "https://github.com/p2panda/p2panda"
 license = "MIT OR Apache-2.0"
 readme = "README.md"
 keywords = ["auth", "access-control", "groups", "crdt", "offline-first"]
-rust-version = "1.94"
+rust-version = "1.96"
 
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
+[lints]
+workspace = true
+
 [features]
-default = ["processor"]
-processor = [
-  "dep:p2panda-core",
-  "dep:p2panda-store",
-  "dep:p2panda-stream",
-  "dep:tokio",
-  "serde",
-]
+default = []
 test_utils = [
-  "dep:p2panda-core",
-  "dep:p2panda-stream",
   "dep:rand",
   "dep:tokio",
   "dep:tracing-subscriber",
   "serde",
+  "p2panda-core/test_utils"
 ]
-serde = ["dep:serde"]
-test = ["test_utils"]
+serde = [
+  "dep:serde",
+]
+test = [
+  "test_utils",
+]
 
 [dependencies]
-p2panda-core = { workspace = true, default-features = true, optional = true }
-p2panda-store = { workspace = true, default-features = true, optional = true }
-p2panda-stream = { workspace = true, default-features = true, optional = true }
+p2panda-core = { workspace = true, default-features = true }
 petgraph = { version = "0.8.3", features = ["serde-1"] }
 rand = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive"], optional = true }
@@ -51,14 +48,4 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["env-filter"], optional = true }
 
 [dev-dependencies]
-anyhow = "1.0.102"
-ciborium = "0.2.2"
-futures-util = "0.3.32"
 p2panda-auth = { path = ".", features = ["test_utils"] }
-p2panda-core = { workspace = true, default-features = true, features = ["test_utils"] }
-p2panda-net = { workspace = true, default-features = true }
-p2panda-store = { workspace = true, default-features = true, features = ["test_utils"] }
-p2panda-sync = { workspace = true, default-features = true }
-
-[lints]
-workspace = true

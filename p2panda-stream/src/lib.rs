@@ -25,6 +25,10 @@
 //!
 //! Processors are meant to only be executed within a single thread and do not allow `Send` or
 //! `Sync` types. Users need to make sure to run this code in a "local" tokio runtime.
+#[cfg(feature = "groups")]
+pub mod groups;
+#[cfg(feature = "hooks")]
+pub mod hooks;
 #[cfg(feature = "ingest")]
 pub mod ingest;
 #[cfg(feature = "log_prune")]
@@ -32,6 +36,8 @@ pub mod log_prune;
 #[cfg(feature = "orderer")]
 pub mod orderer;
 mod processors;
+#[cfg(feature = "spaces")]
+pub mod spaces;
 #[cfg(test)]
 mod test_utils;
 

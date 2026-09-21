@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
-use iroh::endpoint::Connection;
+use iroh::endpoint::{Connection, VarInt};
 use iroh::protocol::ProtocolHandler;
 use p2panda_core::Topic;
 use p2panda_sync::FromSync;
@@ -16,11 +16,14 @@ use p2panda_sync::protocols::{TopicHandshakeAcceptor, TopicHandshakeEvent, Topic
 use p2panda_sync::traits::{Manager as SyncManagerTrait, Protocol};
 use ractor::thread_local::{ThreadLocalActor, ThreadLocalActorSpawner};
 use ractor::{ActorId, ActorProcessingErr, ActorRef, RpcReplyPort, SupervisionEvent};
-use tokio::sync::{RwLock, broadcast};
+use tokio::sync::{RwLock, broadcast, oneshot};
 use tokio::task::JoinHandle;
 use tracing::{debug, warn};
 
-use crate::cbor::{into_cbor_sink, into_cbor_stream};
+use crate::codec::{into_codec_sink, into_codec_stream};
+use crate::connection_authoriser::{
+    ConnectionAuthoriser, ConnectionAuthoriserError, ConnectionAuthoriserEvent,
+};
 use crate::gossip::{Gossip, GossipEvent, GossipHandle};
 use crate::iroh_endpoint::Endpoint;
 use crate::sync::actors::{ToTopicManager, TopicManager};
@@ -37,6 +40,9 @@ const GOSSIP_TOPIC_MIX_VALUE: [u8; 32] = [
     229, 93, 143, 227, 97, 61, 38, 202, 63, 250, 26, 233,
 ];
 
+/// Size of channel buffer for the channel where events are received from topic sync managers.
+const FROM_SYNC_CHANNEL_BUFFER: usize = 1024;
+
 pub enum ToSyncManager<M, E> {
     /// Create stream for this topic and return related manager.
     Create(
@@ -52,7 +58,10 @@ pub enum ToSyncManager<M, E> {
     ),
 
     /// Close all streams for the given topic.
-    Close(Topic),
+    ///
+    /// A response can be awaited on the receiver of the provided oneshot channel to ensure that
+    /// state cleanup has been completed for any relevant sync sessions.
+    Close(Topic, oneshot::Sender<()>),
 
     /// Initiate sync session.
     InitiateSync(Topic, NodeId),
@@ -99,6 +108,7 @@ where
     protocol_id: ProtocolId,
     endpoint: Endpoint,
     gossip: Gossip,
+    connection_authoriser: ConnectionAuthoriser,
     gossip_handles: GossipHandles,
     topic_managers: TopicManagers<M::Message>,
     sync_receivers: TopicManagerReceivers<M::Event>,
@@ -227,14 +237,14 @@ where
 
     type Msg = ToSyncManager<M::Message, M::Event>;
 
-    type Arguments = (ProtocolId, M::Args, Endpoint, Gossip);
+    type Arguments = (ProtocolId, M::Args, Endpoint, Gossip, ConnectionAuthoriser);
 
     async fn pre_start(
         &self,
         myself: ActorRef<Self::Msg>,
         args: Self::Arguments,
     ) -> Result<Self::State, ActorProcessingErr> {
-        let (protocol_id, sync_args, endpoint, gossip) = args;
+        let (protocol_id, sync_args, endpoint, gossip, connection_authoriser) = args;
 
         let gossip_handles = HashMap::new();
         let sync_receivers = HashMap::new();
@@ -250,6 +260,7 @@ where
             protocol_id,
             endpoint,
             gossip,
+            connection_authoriser,
             gossip_handles,
             topic_managers: sync_managers,
             gossip_topics: Arc::default(),
@@ -266,7 +277,9 @@ where
     ) -> Result<(), ActorProcessingErr> {
         // Close all active sync sessions.
         for (_, (actor, _)) in state.topic_managers.topic_manager_map.drain() {
-            actor.send_message(ToTopicManager::CloseAll)?;
+            let (reply, reply_rx) = oneshot::channel();
+            actor.send_message(ToTopicManager::CloseAll(reply))?;
+            let _ = reply_rx.await;
         }
 
         Ok(())
@@ -290,6 +303,7 @@ where
                     .accept(
                         state.protocol_id.clone(),
                         SyncProtocolHandler {
+                            connection_authoriser: state.connection_authoriser.clone(),
                             stream_ref: myself.clone(),
                         },
                     )
@@ -311,7 +325,7 @@ where
 
                 // This is used to send sync messages to the associated stream handle(s). We use a
                 // broadcast channel to allow multiple handles to the same topic.
-                let (from_sync_tx, from_sync_rx) = broadcast::channel(256);
+                let (from_sync_tx, from_sync_rx) = broadcast::channel(FROM_SYNC_CHANNEL_BUFFER);
 
                 // Store the sync receiver so it can later be used to create a subscription
                 // instance by the user.
@@ -347,17 +361,25 @@ where
                 let _ = reply.send(sync_manager_ref);
             }
             ToSyncManager::Subscribe(topic, reply) => {
-                if let Some(from_sync_rx) = state.sync_receivers.get(&topic) {
-                    let subscription = from_sync_rx.resubscribe();
-                    let _ = reply.send(Some(subscription));
+                // Remove the current subscription receiver and return this to the user. Replace
+                // it in the manager with a re-subscribed handle. This ensures that the user
+                // receives any buffered messages.
+                if let Some(from_sync_rx) = state.sync_receivers.remove(&topic) {
+                    let re_subscription = from_sync_rx.resubscribe();
+                    state.sync_receivers.insert(topic, re_subscription);
+                    let _ = reply.send(Some(from_sync_rx));
                 } else {
                     let _ = reply.send(None);
                 }
             }
-            ToSyncManager::Close(topic) => {
+            ToSyncManager::Close(topic, reply) => {
+                debug!(topic = topic.fmt_short(), "close sync in manager");
+
                 // Close all sync sessions running over this topic.
                 if let Some((actor, _)) = state.topic_managers.topic_manager_map.get(&topic) {
-                    actor.send_message(ToTopicManager::CloseAll)?;
+                    let (reply, reply_rx) = oneshot::channel();
+                    actor.send_message(ToTopicManager::CloseAll(reply))?;
+                    let _ = reply_rx.await;
                 }
 
                 // Drop the sync manager state for this topic.
@@ -377,9 +399,36 @@ where
                 // overlay will automatically remove the entry from the address book.
                 state.drop_topic_state(&topic);
 
-                debug!(topic = topic.fmt_short(), "close sync manager");
+                // Inform the caller that termination is complete for sync sessions over this
+                // topic.
+                let _ = reply.send(());
             }
             ToSyncManager::InitiateSync(topic, node_id) => {
+                // Authorise that we should be connecting on this topic with the remote node.
+                if state
+                    .connection_authoriser
+                    .can_connect_on_topic(node_id, topic)
+                    .await
+                {
+                    state
+                        .connection_authoriser
+                        .send_event(ConnectionAuthoriserEvent::TopicAllowed {
+                            topic,
+                            node: node_id,
+                        })
+                        .await;
+                } else {
+                    let event = ConnectionAuthoriserEvent::TopicBlocked {
+                        topic,
+                        node: node_id,
+                    };
+                    warn!("{}", event);
+                    state.connection_authoriser.send_event(event).await;
+
+                    // Do not initiate a sync session with a blocked topic-node combination.
+                    return Ok(());
+                }
+
                 if let Some((sync_manager_actor, live_mode)) =
                     state.topic_managers.topic_manager_map.get(&topic)
                 {
@@ -424,7 +473,9 @@ where
                         "end sync session",
                     );
 
-                    sync_manager_actor.send_message(ToTopicManager::Close { node_id })?;
+                    // We don't wish to await termination so we ignore / drop the receiver.
+                    let (reply, _reply_rx) = oneshot::channel();
+                    sync_manager_actor.send_message(ToTopicManager::Close { node_id, reply })?;
                 }
             }
         }
@@ -474,7 +525,9 @@ where
                         "sync manager failed: {panic_msg:#?}",
                     );
 
-                    myself.send_message(ToSyncManager::Close(topic))?;
+                    let (reply, reply_rx) = oneshot::channel();
+                    myself.send_message(ToSyncManager::Close(topic, reply))?;
+                    let _ = reply_rx.await;
                 }
             }
             _ => (),
@@ -489,6 +542,7 @@ where
     M: Send + 'static,
     E: Send + 'static,
 {
+    connection_authoriser: ConnectionAuthoriser,
     stream_ref: ActorRef<ToSyncManager<M, E>>,
 }
 
@@ -519,10 +573,10 @@ where
         // actual sync session. We may choose to reject the sync session if the handshake resolves
         // to a topic we aren't subscribed to.
 
-        // Establish bi-directional QUIC stream as part of the direct connection and use CBOR
-        // encoding for message framing.
-        let mut tx = into_cbor_sink::<TopicHandshakeMessage<Topic>, _>(tx);
-        let mut rx = into_cbor_stream::<TopicHandshakeMessage<Topic>, _>(rx);
+        // Establish bi-directional QUIC stream as part of the direct connection and use our codec
+        // for message framing and encoding.
+        let mut tx = into_codec_sink::<TopicHandshakeMessage<Topic>, _>(tx);
+        let mut rx = into_codec_stream::<TopicHandshakeMessage<Topic>, _>(rx);
 
         // Channels for sending and receiving protocol events.
         //
@@ -535,6 +589,34 @@ where
             .run(&mut tx, &mut rx)
             .await
             .map_err(|err| iroh::protocol::AcceptError::from_err(err))?;
+
+        let allow = self
+            .connection_authoriser
+            .can_connect_on_topic(node_id, topic)
+            .await;
+
+        // Authorise that we should be connecting on this topic with the remote node.
+        if allow {
+            self.connection_authoriser
+                .send_event(ConnectionAuthoriserEvent::TopicAllowed {
+                    topic,
+                    node: node_id,
+                })
+                .await;
+        } else {
+            let event = ConnectionAuthoriserEvent::TopicBlocked {
+                topic,
+                node: node_id,
+            };
+            warn!("{}", event);
+            self.connection_authoriser.send_event(event).await;
+
+            // Do not accept a sync session with a blocked topic-node combination.
+            connection.close(VarInt::from_u32(0), b"not authorised");
+            return Err(iroh::protocol::AcceptError::from_err(
+                ConnectionAuthoriserError::NotAuthorised,
+            ));
+        }
 
         // We know the topic now and send an accept message to the stream actor where it will then
         // be routed to the correct sync manager.

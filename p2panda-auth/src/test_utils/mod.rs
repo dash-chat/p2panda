@@ -4,16 +4,12 @@
 
 use std::fmt::Debug;
 
-use p2panda_stream::orderer::Ordering;
 use serde::{Deserialize, Serialize};
 
 use crate::Access;
 use crate::group::resolver::StrongRemove;
 use crate::group::{GroupAction, GroupCrdt, GroupCrdtError, GroupCrdtState, GroupMember};
-use crate::traits::{IdentityHandle, Operation, OperationId};
-
-impl IdentityHandle for char {}
-impl OperationId for u32 {}
+use crate::traits::Operation;
 
 pub type MemberId = char;
 pub type MessageId = u32;
@@ -21,8 +17,7 @@ pub type Conditions = ();
 pub type TestGroupState = GroupCrdtState<MemberId, MessageId, TestOperation, Conditions>;
 pub type TestGroup = GroupCrdt<MemberId, MessageId, TestOperation, Conditions, TestResolver>;
 pub type TestResolver = StrongRemove<MemberId, MessageId, TestOperation, Conditions>;
-pub type TestGroupError =
-    GroupCrdtError<MemberId, MessageId, TestOperation, Conditions, TestResolver>;
+pub type TestGroupError = GroupCrdtError<MemberId, MessageId>;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct TestOperation {
@@ -52,12 +47,6 @@ impl Operation<char, u32, Conditions> for TestOperation {
 
     fn action(&self) -> GroupAction<char, Conditions> {
         self.action.clone()
-    }
-}
-
-impl Ordering<u32> for TestOperation {
-    fn dependencies(&self) -> &[u32] {
-        &self.dependencies
     }
 }
 

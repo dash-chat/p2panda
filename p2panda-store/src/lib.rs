@@ -44,7 +44,7 @@
 //! transaction.
 //!
 //! ```rust
-//! # use p2panda_core::{Topic, Header, Hash, Body, Operation, VerifyingKey, SigningKey, Timestamp};
+//! # use p2panda_core::{Topic, Header, SeqNum, Hash, Body, Operation, VerifyingKey, SigningKey};
 //! # use p2panda_store::logs::LogStore;
 //! # use p2panda_store::operations::OperationStore;
 //! # use p2panda_store::topics::TopicStore;
@@ -58,7 +58,7 @@
 //! # let log_id = 2;
 //! # let topic = Topic::random();
 //! # let signing_key = SigningKey::generate();
-//! # let body = Body::new(b"Transaction! Yay!");
+//! # let body = Body::from_bytes(b"Transaction! Yay!");
 //! #
 //! // Acquire a lock on the store for the duration of the read to write cycle.
 //! //
@@ -68,39 +68,18 @@
 //! // Here we acquire a store permit, query the latest log entry, associate the topic with
 //! // the log, insert the operation and commit the transaction before dropping the permit.
 //! let operation = tx!(store, {
-//!     let (seq_num, backlink) = <SqliteStore as LogStore<
-//!         Operation<()>,
-//!         VerifyingKey,
-//!         u64,
-//!         u64,
-//!         Hash,
-//!     >>::get_latest_entry_tx(
-//!         &store, &signing_key.verifying_key(), &log_id
+//!     let (seq_num, backlink) = store.get_latest_entry_tx(
+//!         &signing_key.verifying_key(), &log_id
 //!     )
 //!     .await?
 //!     .map(|operation| (operation.header.seq_num + 1, Some(operation.hash)))
 //!     .unwrap_or((0, None));
 //!
-//!     let mut header = Header {
-//!         version: 1,
-//!         verifying_key: signing_key.verifying_key(),
-//!         signature: None,
-//!         payload_size: body.size(),
-//!         payload_hash: Some(body.hash()),
-//!         timestamp: Timestamp::now(),
-//!         seq_num,
-//!         backlink,
-//!         extensions: (),
-//!     };
-//!
-//!     header.sign(&signing_key);
-//!     let hash = header.hash();
-//!
-//!     let operation = Operation {
-//!         hash,
-//!         header: header.clone(),
-//!         body: Some(body),
-//!     };
+//!     let header = Header::builder()
+//!         .seq_num(seq_num)
+//!         .backlink(backlink)
+//!         .body(&body)
+//!         .build(&signing_key, ());
 //!
 //!     <SqliteStore as TopicStore<Topic, VerifyingKey, u64>>::associate(
 //!         &store,
@@ -110,8 +89,10 @@
 //!     )
 //!     .await?;
 //!
+//!     let operation = Operation::from_parts(header, Some(body));
+//!
 //!     store
-//!         .insert_operation(&hash, &operation, &log_id)
+//!         .insert_operation(&operation.hash, &operation, &log_id)
 //!         .await?;
 //!
 //!     operation
@@ -121,12 +102,21 @@
 //! ```
 pub mod address_book;
 pub mod cursors;
+#[cfg(feature = "groups")]
 pub mod groups;
+#[cfg(feature = "encryption")]
+pub mod key_registry;
+#[cfg(feature = "encryption")]
+pub mod key_secrets;
 pub mod logs;
 #[cfg(feature = "macros")]
 mod macros;
 pub mod operations;
 pub mod orderer;
+#[cfg(feature = "processor")]
+pub mod processor;
+#[cfg(feature = "spaces")]
+pub mod spaces;
 #[cfg(feature = "sqlite")]
 pub mod sqlite;
 pub mod topics;
