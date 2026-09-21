@@ -2,8 +2,8 @@
 
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
-//! p2panda's high-level Node API is an opinionated, out-of-the-box peer-to-peer stack which
-//! orchestrates all individual [p2panda] modules.
+//! p2panda's high-level API is an opinionated, out-of-the-box peer-to-peer stack which orchestrates
+//! all individual [p2panda] modules.
 //!
 //! ```rust
 //! # #[tokio::main]
@@ -21,7 +21,7 @@
 //!
 //! ## Features
 //!
-//! - High-level p2panda Node API for building decentralised p2p and [local-first] applications with
+//! - High-level p2panda API for building decentralised p2p and [local-first] applications with
 //!   minimal setup
 //! - Unified orchestration of p2p networking, node discovery, mDNS, bootstrap, [eventually
 //!   consistent] sync, event streaming, causal ordering, pruning and persistence
@@ -41,15 +41,15 @@
 //!
 //! ## Walkaway Stack
 //!
-//! The Node API is designed around a separation between the event delivery and event processing
-//! layers. Applications built with p2panda should not need to care abot _where_ messages originate
-//! from, but rather _how_ they are processed.
+//! The high-level API is designed around a separation between the event delivery and event
+//! processing layers. Applications built with p2panda should not need to care abot _where_ messages
+//! originate from, but rather _how_ they are processed.
 //!
 //! The stack confidentially discovers nodes interested in the same topic, synchronises missed
 //! messages and delivers them to the processing layer.
 //!
-//! Today this is implemented over the Internet using [iroh] for direct peer-to-peer connections
-//! but the abstraction is designed to support additional transports such as LoRa or BLE, including
+//! Today this is implemented over the Internet using [iroh] for direct peer-to-peer connections but
+//! the abstraction is designed to support additional transports such as LoRa or BLE, including
 //! delay-tolerant and store-and-forward mesh network topologies in the future.
 //!
 //! Application developers primarily interact with the API to monitor networking and sync activity,
@@ -93,7 +93,7 @@
 //!
 //! ### SQLite database
 //!
-//! The Node API persists synchronised Operations in a local SQLite database, together with
+//! The high-level API persists synchronised Operations in a local SQLite database, together with
 //! additional state such as address books, causal ordering buffers, topic mappings and stream
 //! cursors.
 //!
@@ -252,24 +252,30 @@
 //! [local-first]: https://www.inkandswitch.com/local-first-software/
 //! [p2panda]: https://p2panda.org
 mod builder;
+pub mod credentials;
 mod forge;
+pub mod groups;
 pub mod network;
 pub mod node;
 pub mod operation;
 pub mod processor;
+pub mod spaces;
 pub mod streams;
-#[cfg(any(test, feature = "test_utils"))]
-pub mod test_utils;
 
 // Useful external types we want to re-export for convenience.
+#[doc(no_inline)]
+pub use p2panda_auth::AccessLevel;
 #[doc(no_inline)]
 pub use p2panda_core::{Cursor, Hash, SigningKey, Topic, VerifyingKey};
 #[doc(no_inline)]
 pub use p2panda_net::iroh_endpoint::{EndpointAddr, RelayUrl};
 #[doc(no_inline)]
 pub use p2panda_net::{Endpoint, NetworkId, NodeId};
+#[doc(no_inline)]
+pub use p2panda_spaces::SpaceEvent;
 
 pub use builder::NodeBuilder;
+pub use credentials::Credentials;
 #[doc(inline)]
 pub use node::Node;
 

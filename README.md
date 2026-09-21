@@ -48,13 +48,13 @@ Bluetooth Low Energy, LoRa or simply a USB stick.
 ## Getting Started
 
 The fastest path to get started with p2panda is to use our high-level [p2panda
-Node API](https://docs.rs/p2panda).
+API](https://docs.rs/p2panda).
 
 For more low-level hacking check out the list of our libraries below.
 
 ## Other languages / FFI
 
-There's experimental support for bindings of p2panda's Node API into alternative programming
+There's experimental support for bindings of p2panda's high-level API into alternative programming
 languages and flavours:
 
 - [`p2panda-gobject`] Introspectable GLib/GObject API for various languages
@@ -62,7 +62,7 @@ languages and flavours:
 
 ## Libraries
 
-📦 [`p2panda`](https://crates.io/crates/p2panda) - Out-of-the-box p2panda Node API for application developers.
+📦 [`p2panda`](https://crates.io/crates/p2panda) - Out-of-the-box p2panda API for application developers.
 
 📦 [`p2panda-net`](https://crates.io/crates/p2panda-net) - Data-type-agnostic p2p networking, discovery, gossip and local-first sync.
 
@@ -77,6 +77,8 @@ languages and flavours:
 📦 [`p2panda-store`](https://crates.io/crates/p2panda-store) - Interfaces and implementations to store p2panda data types in databases, memory or file-systems.
 
 📦 [`p2panda-stream`](https://crates.io/crates/p2panda-stream) - Collection of various methods to process your p2panda data streams before they reach your application.
+
+📦 [`p2panda-spaces`](https://crates.io/crates/p2panda-spaces) - Data encryption for multi-device groups.
 
 📦 [`p2panda-encryption`](https://crates.io/crates/p2panda-encryption) - Decentralised data- and message encryption for groups with post-compromise security and optional forward secrecy.
 

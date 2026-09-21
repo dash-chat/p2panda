@@ -4,8 +4,8 @@
 use std::fmt::{Debug, Display};
 use std::marker::PhantomData;
 
-use futures::channel::mpsc;
-use futures::{Sink, SinkExt, Stream, StreamExt};
+use futures_channel::mpsc;
+use futures_util::{Sink, SinkExt, Stream, StreamExt};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -168,7 +168,6 @@ where
 
 /// Protocol message types.
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
-#[serde(tag = "type", content = "value")]
 pub enum TopicHandshakeMessage<T> {
     Topic(T),
     Done,

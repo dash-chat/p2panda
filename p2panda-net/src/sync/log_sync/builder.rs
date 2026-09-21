@@ -3,12 +3,13 @@
 use std::fmt::Debug;
 use std::marker::PhantomData;
 
-use p2panda_core::{Extensions, Hash, LogId, Operation, Topic, VerifyingKey};
+use p2panda_core::{AnyOperation, Extensions, Hash, LogId, SeqNum, Topic, VerifyingKey};
 use p2panda_store::logs::LogStore;
 use p2panda_store::topics::TopicStore;
 use p2panda_sync::manager::TopicSyncManager;
 use ractor::thread_local::{ThreadLocalActor, ThreadLocalActorSpawner};
 
+use crate::connection_authoriser::ConnectionAuthoriser;
 use crate::gossip::Gossip;
 use crate::iroh_endpoint::Endpoint;
 use crate::sync::actors::SyncManager;
@@ -16,7 +17,7 @@ use crate::sync::log_sync::{LOG_SYNC_PROTOCOL_ID, LogSync, LogSyncError};
 
 pub struct Builder<S, L, E>
 where
-    S: LogStore<Operation<E>, VerifyingKey, L, u64, Hash>
+    S: LogStore<AnyOperation, VerifyingKey, L, SeqNum, Hash>
         + TopicStore<Topic, VerifyingKey, L>
         + Clone
         + Send
@@ -27,12 +28,13 @@ where
     store: S,
     endpoint: Endpoint,
     gossip: Gossip,
+    connection_authoriser: ConnectionAuthoriser,
     _marker: PhantomData<(L, E)>,
 }
 
 impl<S, L, E> Builder<S, L, E>
 where
-    S: LogStore<Operation<E>, VerifyingKey, L, u64, Hash>
+    S: LogStore<AnyOperation, VerifyingKey, L, SeqNum, Hash>
         + TopicStore<Topic, VerifyingKey, L>
         + Clone
         + Send
@@ -41,12 +43,19 @@ where
     E: Extensions + Send + 'static,
 {
     pub fn new(store: S, endpoint: Endpoint, gossip: Gossip) -> Self {
+        let connection_authoriser = ConnectionAuthoriser::new();
         Self {
             store,
             endpoint,
             gossip,
+            connection_authoriser,
             _marker: PhantomData,
         }
+    }
+
+    pub fn connection_authoriser(mut self, connection_authoriser: ConnectionAuthoriser) -> Self {
+        self.connection_authoriser = connection_authoriser;
+        self
     }
 
     pub async fn spawn(self) -> Result<LogSync<S, L, E>, LogSyncError<E>> {
@@ -58,6 +67,7 @@ where
                 self.store,
                 self.endpoint,
                 self.gossip,
+                self.connection_authoriser,
             );
 
             SyncManager::<TopicSyncManager<Topic, S, L, E>>::spawn(None, args, thread_pool).await?

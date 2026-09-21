@@ -29,13 +29,12 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::Result;
 use clap::Parser;
 use futures_util::StreamExt;
 use iroh::EndpointAddr;
 use p2panda_core::cbor::{decode_cbor, encode_cbor};
 use p2panda_core::test_utils::setup_logging;
-use p2panda_core::{Body, Hash, Header, Operation, SigningKey, Timestamp, Topic, VerifyingKey};
+use p2panda_core::{Body, Hash, Header, Operation, SigningKey, Topic, VerifyingKey};
 use p2panda_net::addrs::NodeInfo;
 use p2panda_net::iroh_mdns::MdnsDiscoveryMode;
 use p2panda_net::utils::{ShortFormat, from_verifying_key};
@@ -90,7 +89,7 @@ struct Args {
 }
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     setup_logging();
 
     let args = Args::parse();
@@ -241,7 +240,7 @@ async fn main() -> Result<()> {
                         );
                     }
                     SyncEvent::OperationReceived { operation, .. } => {
-                        if <SqliteStore as OperationStore<Operation, Hash, LogId>>::has_operation(
+                        if <SqliteStore as OperationStore<Operation, Hash>>::has_operation(
                             &store,
                             &operation.hash,
                         )
@@ -311,8 +310,17 @@ async fn main() -> Result<()> {
     // Sign and encode each line of text input and broadcast it on the chat topic.
     tokio::task::spawn(async move {
         while let Some(text) = line_rx.recv().await {
-            let body = Body::new(text.as_bytes());
-            let (hash, operation) = create_operation(&signing_key, &body, seq_num, backlink);
+            let body = Body::from_bytes(text.as_bytes());
+
+            let header = Header::builder()
+                .seq_num(seq_num)
+                .backlink(backlink)
+                .body(&body)
+                .build(&signing_key, ());
+
+            let operation = Operation::from_parts(header, Some(body));
+            let hash = operation.hash;
+
             let permit = store.begin().await.unwrap();
             store
                 .insert_operation(&hash, &operation, &LOG_ID)
@@ -320,7 +328,7 @@ async fn main() -> Result<()> {
                 .unwrap();
             store.commit(permit).await.unwrap();
 
-            sync_tx.publish(operation).await.unwrap();
+            sync_tx.publish(operation).unwrap();
 
             seq_num += 1;
             backlink = Some(hash);
@@ -349,42 +357,14 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-fn input_loop(line_tx: mpsc::Sender<String>) -> Result<()> {
+fn input_loop(line_tx: mpsc::Sender<String>) -> Result<(), std::io::Error> {
     let mut buffer = String::new();
     let stdin = std::io::stdin();
     loop {
         stdin.read_line(&mut buffer)?;
-        line_tx.blocking_send(buffer.clone())?;
+        line_tx
+            .blocking_send(buffer.clone())
+            .map_err(|err| std::io::Error::other(err))?;
         buffer.clear();
     }
-}
-
-fn create_operation(
-    signing_key: &SigningKey,
-    body: &Body,
-    seq_num: u64,
-    backlink: Option<Hash>,
-) -> (Hash, Operation) {
-    let mut header = Header {
-        version: 1,
-        verifying_key: signing_key.verifying_key(),
-        signature: None,
-        payload_size: body.size(),
-        payload_hash: Some(body.hash()),
-        timestamp: Timestamp::now(),
-        seq_num,
-        backlink,
-        extensions: (),
-    };
-
-    header.sign(signing_key);
-    let hash = header.hash();
-
-    let operation = Operation {
-        hash,
-        header: header.clone(),
-        body: Some(body.to_owned()),
-    };
-
-    (hash, operation)
 }

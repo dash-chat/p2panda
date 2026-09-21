@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
+use std::fmt::Display;
+
+use p2panda_core::Author;
 #[cfg(any(test, feature = "serde"))]
 use serde::{Deserialize, Serialize};
-
-use crate::traits::IdentityHandle;
 
 /// A group member which can be a single individual or another group.
 ///
@@ -18,7 +19,7 @@ pub enum GroupMember<ID> {
 
 impl<ID> GroupMember<ID>
 where
-    ID: Copy,
+    ID: Author,
 {
     /// Return the ID of a group member.
     pub fn id(&self) -> ID {
@@ -42,4 +43,14 @@ where
     }
 }
 
-impl<ID> IdentityHandle for GroupMember<ID> where ID: IdentityHandle {}
+impl<ID> Display for GroupMember<ID>
+where
+    ID: Author,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            GroupMember::Individual(id) => write!(f, "Individual({id})",),
+            GroupMember::Group(id) => write!(f, "Group({id})",),
+        }
+    }
+}

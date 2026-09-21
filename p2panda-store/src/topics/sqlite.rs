@@ -95,10 +95,7 @@ where
     }
 
     /// Retrieve a list of all logs associated with the provided topic for all known authors.
-    async fn resolve_associations(
-        &self,
-        topic: &T,
-    ) -> Result<BTreeMap<VerifyingKey, Vec<L>>, Self::Error> {
+    async fn resolve(&self, topic: &T) -> Result<BTreeMap<VerifyingKey, Vec<L>>, Self::Error> {
         let data_ids = self
             .execute(async |pool| {
                 query_as::<_, (String, Vec<u8>)>(
@@ -139,13 +136,13 @@ where
         Ok(result)
     }
 
-    /// Given a prior association, return the associated topic.
-    async fn resolve_topic(
+    /// Given a prior association, return the associated topics.
+    async fn resolve_topics(
         &self,
         author: &VerifyingKey,
         data_id: &L,
-    ) -> Result<Option<T>, Self::Error> {
-        let topic = self
+    ) -> Result<Vec<T>, Self::Error> {
+        let topics = self
             .execute(async |pool| {
                 query_scalar::<_, Vec<u8>>(
                     "
@@ -163,19 +160,49 @@ where
                     encode_cbor(&data_id)
                         .map_err(|err| SqliteError::Encode("data_id".to_string(), err))?,
                 )
-                .fetch_optional(pool)
+                .fetch_all(pool)
                 .await
                 .map_err(SqliteError::Sqlite)
             })
             .await?;
 
-        let Some(topic) = topic else {
-            return Ok(None);
-        };
+        let topics = topics
+            .into_iter()
+            .map(|topic| {
+                decode_cbor(&topic[..])
+                    .map_err(|err| SqliteError::Decode("topic".into(), err.into()))
+            })
+            .collect::<Result<Vec<T>, SqliteError>>()?;
 
-        let topic = decode_cbor(&topic[..])
-            .map_err(|err| SqliteError::Decode("topic".into(), err.into()))?;
+        Ok(topics)
+    }
 
-        Ok(Some(topic))
+    /// Retrieve all topics for which active associations exist.
+    async fn topics(&self) -> Result<Vec<T>, Self::Error> {
+        let topics = self
+            .tx(async |tx| {
+                query_as::<_, (Vec<u8>,)>(
+                    "
+                    SELECT DISTINCT
+                        topic
+                    FROM
+                        topics_v1
+                    ",
+                )
+                .fetch_all(&mut **tx)
+                .await
+                .map_err(SqliteError::Sqlite)
+            })
+            .await?;
+
+        let mut result: Vec<T> = Vec::new();
+
+        for (topic,) in topics {
+            let topic = decode_cbor(&topic[..])
+                .map_err(|err| SqliteError::Decode("topic".into(), err.into()))?;
+            result.push(topic);
+        }
+
+        Ok(result)
     }
 }

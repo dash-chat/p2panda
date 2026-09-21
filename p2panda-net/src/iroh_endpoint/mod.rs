@@ -6,6 +6,7 @@ mod api;
 mod builder;
 mod config;
 mod discovery;
+mod hooks;
 mod os_resolver;
 #[cfg(feature = "supervisor")]
 mod supervisor;
@@ -15,6 +16,7 @@ pub(crate) mod user_data;
 
 // Re-export useful iroh types.
 pub use iroh;
+pub use iroh::endpoint::{AfterHandshakeOutcome, BeforeConnectOutcome, EndpointHooks};
 pub use iroh::{EndpointAddr, RelayUrl};
 
 pub use api::{Endpoint, EndpointError};

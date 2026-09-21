@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
+//! State vector to track and compare logs.
 use std::hash::Hash as StdHash;
 
-use crate::identity::Author;
-use crate::logs::{LogHeights, LogId, LogRanges, SeqNum, compare};
+use crate::logs::{LogHeights, LogId, LogRanges, SeqNum, compare_logs};
+use crate::traits::Author;
 
 /// Cursor to track log heights (state vector).
 ///
@@ -44,7 +45,7 @@ where
 
     /// Calculates the difference between two state vectors.
     pub fn compare(&self, other: &LogHeights<A, L>) -> LogRanges<A, L> {
-        compare(other, &self.state)
+        compare_logs(other, &self.state)
     }
 
     /// Advances the state of a specific log.

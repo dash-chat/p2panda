@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-use std::collections::HashSet;
+use std::collections::HashMap;
 
+use iroh::endpoint::EndpointHooks;
 use p2panda_core::SigningKey;
 use ractor::thread_local::{ThreadLocalActor, ThreadLocalActorSpawner};
 
@@ -9,14 +10,16 @@ use crate::address_book::AddressBook;
 use crate::iroh_endpoint::actors::{IrohEndpoint, IrohEndpointArgs};
 use crate::iroh_endpoint::api::{Endpoint, EndpointError};
 use crate::iroh_endpoint::config::IrohConfig;
+use crate::iroh_endpoint::hooks::EndpointHooksList;
 use crate::{DEFAULT_NETWORK_ID, NetworkId};
 
 pub struct Builder {
     network_id: Option<NetworkId>,
     signing_key: Option<SigningKey>,
     config: Option<IrohConfig>,
-    relay_urls: HashSet<iroh::RelayUrl>,
+    relays: HashMap<iroh::RelayUrl, Option<String>>,
     address_book: AddressBook,
+    hooks: EndpointHooksList,
 }
 
 impl Builder {
@@ -25,8 +28,9 @@ impl Builder {
             network_id: None,
             signing_key: None,
             config: None,
+            relays: HashMap::new(),
             address_book,
-            relay_urls: HashSet::new(),
+            hooks: EndpointHooksList::new(),
         }
     }
 
@@ -64,7 +68,28 @@ impl Builder {
     /// If no relay is given other nodes can only connect to us if a directly reachable IP address
     /// is available and known to them.
     pub fn relay_url(mut self, url: iroh::RelayUrl) -> Self {
-        self.relay_urls.insert(url);
+        self.relays.insert(url, None);
+        self
+    }
+
+    pub fn relay_url_with_token(mut self, url: iroh::RelayUrl, token: impl Into<String>) -> Self {
+        self.relays.insert(url, Some(token.into()));
+        self
+    }
+
+    /// Register custom hooks with the endpoint.
+    ///
+    /// Endpoint hooks intercept the connection establishment process of an iroh `Endpoint`.
+    ///
+    /// Multiple hooks can be registered with the `Endpoint` and will be called in their order of
+    /// registration. If any of the hooks result in a connection rejection, all further processing
+    /// is aborted and subsequent hooks will not be called.
+    ///
+    /// See iroh's [`EndpointHooks`] documentation for further details.
+    ///
+    /// [`EndpointHooks`]: https://docs.rs/iroh/latest/iroh/endpoint/trait.EndpointHooks.html
+    pub fn hooks(mut self, hook: impl EndpointHooks + 'static + Clone) -> Self {
+        self.hooks.push(hook);
         self
     }
 
@@ -72,13 +97,23 @@ impl Builder {
         let network_id = self.network_id.unwrap_or(DEFAULT_NETWORK_ID);
         let signing_key = self.signing_key.unwrap_or_default();
         let config = self.config.unwrap_or_default();
-        let relay_map = iroh::RelayMap::from_iter(self.relay_urls);
+
+        let relay_map = self
+            .relays
+            .into_iter()
+            .map(|(url, token)| match token {
+                Some(token) => iroh::RelayConfig::from(url).with_auth_token(token),
+                None => iroh::RelayConfig::from(url),
+            })
+            .collect();
+
         (
             network_id,
             signing_key,
             config,
             relay_map,
             self.address_book,
+            self.hooks,
         )
     }
 

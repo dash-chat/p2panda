@@ -47,7 +47,7 @@ impl KeyManagerState {
 /// pre-keys.
 ///
 /// This can be serialized and independently stored from the identity secrets.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PreKeyBundlesState(HashMap<PreKeyId, PreKeyBundle>);
 
 impl PreKeyBundlesState {
@@ -101,7 +101,7 @@ impl PreKeyBundlesState {
 
 /// Extended pre-key struct holding the public and secret parts and signature, authenticating the
 /// pre-key with an identity.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PreKeyBundle {
     prekey: PreKey,
     signature: XSignature,
@@ -424,16 +424,16 @@ mod tests {
         .unwrap();
 
         // Current pre-key bundle is invalid.
-        assert!(matches!(
+        std::assert_matches!(
             KeyManager::prekey_bundle(&y),
             Err(KeyManagerError::NoPreKeysAvailable)
-        ));
+        );
 
         // Can't generate one-time key bundle with expired pre keys.
-        assert!(matches!(
+        std::assert_matches!(
             KeyManager::generate_onetime_bundle(y.clone(), &rng),
             Err(KeyManagerError::NoPreKeysAvailable)
-        ));
+        );
 
         // Generate a new one.
         let y_i = KeyManager::rotate_prekey(y, Lifetime::default(), &rng).unwrap();

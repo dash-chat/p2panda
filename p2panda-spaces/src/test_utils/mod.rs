@@ -1,61 +1,46 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 mod forge;
-mod message;
-mod store;
 
-use p2panda_auth::traits::Conditions;
+use std::borrow::Borrow;
+
 use p2panda_encryption::Rng;
+use p2panda_store::operations::OperationStore;
+use p2panda_store::spaces::SqliteSpacesStore;
+use p2panda_store::{SqliteError, SqliteStore, tx_unwrap};
 
-use crate::Config;
-use crate::Credentials;
 use crate::manager::Manager;
 use crate::space::SpaceError;
-use crate::traits::SpaceId;
-use crate::types::StrongRemoveResolver;
+use crate::test_utils::forge::DEFAULT_LOG_ID;
+use crate::{Config, Credentials, SpacesArgs};
 
 pub use forge::TestForge;
-pub use message::TestMessage;
-pub use store::{TestKeyStore, TestStore};
-
-pub type TestSpaceId = usize;
-
-impl SpaceId for TestSpaceId {}
 
 pub type TestPeerId = u8;
 
-#[derive(Clone, Debug, PartialEq, PartialOrd)]
-pub struct TestConditions {}
+pub type TestConditions = ();
 
-impl Conditions for TestConditions {}
+pub type TestExtensions = SpacesArgs<TestConditions>;
 
-pub type TestManager = Manager<
-    TestSpaceId,
-    TestStore,
-    TestKeyStore,
-    TestForge<TestStore>,
-    TestMessage,
-    TestConditions,
-    StrongRemoveResolver<TestConditions>,
->;
+pub type TestOperation = p2panda_core::Operation<TestExtensions>;
 
-pub type TestSpaceError = SpaceError<
-    TestSpaceId,
-    TestStore,
-    TestKeyStore,
-    TestForge<TestStore>,
-    TestMessage,
-    TestConditions,
-    StrongRemoveResolver<TestConditions>,
->;
+pub type TestSpacesStore = p2panda_store::spaces::SqliteSpacesStore<TestExtensions>;
+
+impl Borrow<SpacesArgs<TestConditions>> for TestOperation {
+    fn borrow(&self) -> &SpacesArgs<TestConditions> {
+        &self.header.extensions
+    }
+}
+
+pub type TestManager = Manager<SqliteSpacesStore<TestExtensions>, TestForge, TestConditions>;
+
+pub type TestSpaceError = SpaceError<TestForge, TestConditions>;
 
 pub struct TestPeer {
-    #[allow(unused)]
-    pub(crate) id: TestPeerId,
-    #[allow(unused)]
-    pub(crate) manager: TestManager,
-    #[allow(unused)]
-    pub(crate) credentials: Credentials,
+    pub id: TestPeerId,
+    pub manager: TestManager,
+    pub credentials: Credentials,
+    pub store: SqliteStore,
 }
 
 impl TestPeer {
@@ -63,34 +48,41 @@ impl TestPeer {
         let rng = Rng::from_seed([peer_id; 32]);
         let credentials = Credentials::from_rng(&rng).unwrap();
         let config = Config::default();
-        Self::new_with_config(peer_id, credentials, &config, rng).await
+        Self::new_with_config(peer_id, credentials, config, rng).await
     }
 
     pub async fn new_with_config(
         peer_id: TestPeerId,
         credentials: Credentials,
-        config: &Config,
+        config: Config,
         rng: Rng,
     ) -> Self {
-        let spaces_store = TestStore::new();
-        let key_store = TestKeyStore::new();
-        let forge = TestForge::new(spaces_store.clone(), credentials.signing_key());
+        let store = SqliteStore::temporary().await;
+        let spaces_store = TestSpacesStore::new(store.clone());
+        let forge = TestForge::new(store.clone(), credentials.signing_key());
 
         let manager = TestManager::new_with_config(
-            spaces_store,
-            key_store,
+            spaces_store.clone(),
             forge,
             credentials.clone(),
             config,
             rng,
         )
-        .await
         .unwrap();
 
         Self {
             id: peer_id,
             manager,
             credentials,
+            store,
         }
+    }
+
+    pub async fn persist_operation(&self, operation: &TestOperation) -> Result<bool, SqliteError> {
+        tx_unwrap!(self.store, {
+            self.store
+                .insert_operation(&operation.hash, operation, &DEFAULT_LOG_ID)
+                .await
+        })
     }
 }

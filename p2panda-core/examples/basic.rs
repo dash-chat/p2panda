@@ -3,30 +3,17 @@
 //! We create a new body containing a data payload, as well as a header, and then sign the header
 //! with an Ed25519 private key. The signed header and body are then used to create an operation.
 //! Finally, we validate the operation.
-use p2panda_core::{Body, Header, Operation, SigningKey, Timestamp, validate_operation};
+use p2panda_core::{Body, Header, Operation, SigningKey, validate_operation};
 
 fn main() {
     // Create a new Ed25519 signing key.
     let signing_key = SigningKey::generate();
 
     // An operation body contains application data.
-    let body = Body::new("Hello, Sloth!".as_bytes());
+    let body = Body::from_bytes("Hello, Sloth!".as_bytes());
 
-    // Create a header.
-    let mut header = Header {
-        version: 1,
-        verifying_key: signing_key.verifying_key(),
-        signature: None,
-        payload_size: body.size(),
-        payload_hash: Some(body.hash()),
-        timestamp: Timestamp::now(),
-        seq_num: 0,
-        backlink: None,
-        extensions: None::<()>,
-    };
-
-    // Sign the header.
-    header.sign(&signing_key);
+    // Create and sign a header.
+    let header = Header::builder().body(&body).build(&signing_key, ());
 
     // An operation containing the header hash (the operation id), the header itself and an optional body.
     let operation = Operation {

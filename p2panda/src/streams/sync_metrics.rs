@@ -6,10 +6,11 @@ use p2panda_core::{Extensions, Operation};
 use p2panda_net::NodeId;
 use p2panda_sync::FromSync;
 use p2panda_sync::protocols::{Metrics, TopicLogSyncEvent};
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::streams::StreamEvent;
 use crate::streams::stream::Source;
+use crate::streams::{ForwardEvent, StreamEvent};
 
 type SessionId = u64;
 
@@ -17,13 +18,13 @@ type SessionId = u64;
 #[derive(Clone, Debug, Default)]
 pub struct Aggregator {
     /// Total number of running sync sessions for a topic.
-    running_sessions: u64,
+    running_sessions: u32,
 
     /// Total number of bytes sent across all topic sessions.
-    total_bytes_sent: u64,
+    total_bytes_sent: u32,
 
     /// Total number of received bytes across all topic sessions.
-    total_bytes_received: u64,
+    total_bytes_received: u32,
 
     /// Latest metrics for all sessions.
     session_metrics: HashMap<SessionId, Metrics>,
@@ -141,17 +142,17 @@ impl Aggregator {
     }
 
     /// Total running sessions for a topic.
-    pub fn running_sessions(&self) -> u64 {
+    pub fn running_sessions(&self) -> u32 {
         self.running_sessions
     }
 
     /// Total bytes sent on a topic.
-    pub fn total_bytes_sent(&self) -> u64 {
+    pub fn total_bytes_sent(&self) -> u32 {
         self.total_bytes_sent
     }
 
     /// Total bytes received on a topic.
-    pub fn total_bytes_received(&self) -> u64 {
+    pub fn total_bytes_received(&self) -> u32 {
         self.total_bytes_received
     }
 }
@@ -165,7 +166,7 @@ impl Aggregator {
 /// The nodes then move into the `Live` phase, where any newly-published messages for the relevant
 /// topic will be sent immediately over the sync session - without the nodes first having to
 /// announce and synchronise over their respective states.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum SessionPhase {
     Sync,
     Live,
@@ -177,21 +178,21 @@ pub(crate) enum SyncEvent<E> {
     SyncStarted {
         remote: NodeId,
         session_id: u64,
-        incoming_operations: u64,
-        outgoing_operations: u64,
-        incoming_bytes: u64,
-        outgoing_bytes: u64,
-        topic_sessions: u64,
+        incoming_operations: u32,
+        outgoing_operations: u32,
+        incoming_bytes: u32,
+        outgoing_bytes: u32,
+        topic_sessions: u32,
     },
     SyncEnded {
         remote: NodeId,
         session_id: u64,
-        sent_operations: u64,
-        received_operations: u64,
-        sent_bytes: u64,
-        received_bytes: u64,
-        sent_bytes_topic_total: u64,
-        received_bytes_topic_total: u64,
+        sent_operations: u32,
+        received_operations: u32,
+        sent_bytes: u32,
+        received_bytes: u32,
+        sent_bytes_topic_total: u32,
+        received_bytes_topic_total: u32,
         error: Option<SyncError>,
     },
     OperationReceived {
@@ -245,6 +246,12 @@ impl<E, M> From<SyncEvent<E>> for StreamEvent<M> {
             // decoded first so this branch is never called.
             SyncEvent::OperationReceived { .. } => unreachable!(),
         }
+    }
+}
+
+impl<E, M> From<SyncEvent<E>> for ForwardEvent<M> {
+    fn from(value: SyncEvent<E>) -> Self {
+        StreamEvent::from(value).into()
     }
 }
 

@@ -1,79 +1,60 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-use std::convert::Infallible;
-use std::sync::Arc;
+use p2panda_core::{Header, SigningKey, VerifyingKey};
+use p2panda_store::logs::LogStore;
+use p2panda_store::operations::OperationStore;
+use p2panda_store::{SqliteError, SqliteStore, tx};
 
-use p2panda_core::{SigningKey, VerifyingKey};
-use tokio::sync::RwLock;
-
+use crate::forge::Forge;
 use crate::message::SpacesArgs;
-use crate::test_utils::message::SeqNum;
-use crate::test_utils::{TestConditions, TestMessage, TestSpaceId};
-use crate::traits::{AuthoredMessage, Forge, MessageStore};
+use crate::test_utils::{TestConditions, TestOperation};
+
+pub const DEFAULT_LOG_ID: u32 = 0;
 
 #[derive(Debug, Clone)]
-pub struct TestForge<S> {
-    verifying_key: VerifyingKey,
-    store: S,
-    inner: Arc<RwLock<TestForgeInner>>,
+pub struct TestForge {
+    signing_key: SigningKey,
+    store: SqliteStore,
 }
 
-impl<S> TestForge<S>
-where
-    S: MessageStore<TestMessage>,
-{
-    pub fn new(store: S, signing_key: SigningKey) -> Self {
-        Self {
-            verifying_key: signing_key.verifying_key(),
-            store,
-            inner: Arc::new(RwLock::new(TestForgeInner {
-                next_seq_num: 0,
-                signing_key,
-            })),
-        }
+impl TestForge {
+    pub fn new(store: SqliteStore, signing_key: SigningKey) -> Self {
+        Self { signing_key, store }
     }
 }
 
-#[derive(Debug)]
-pub struct TestForgeInner {
-    #[allow(unused)]
-    next_seq_num: SeqNum,
-    #[allow(unused)]
-    signing_key: SigningKey,
-}
+impl Forge<TestConditions> for TestForge {
+    type Message = TestOperation;
 
-impl<S> Forge<TestSpaceId, TestMessage, TestConditions> for TestForge<S>
-where
-    S: MessageStore<TestMessage>,
-{
-    type Error = Infallible;
+    type Error = SqliteError;
 
     fn verifying_key(&self) -> VerifyingKey {
-        self.verifying_key
+        self.signing_key.verifying_key()
     }
 
-    async fn forge(
-        &self,
-        args: SpacesArgs<TestSpaceId, TestConditions>,
-    ) -> Result<TestMessage, Self::Error> {
-        let seq_num = {
-            let mut inner = self.inner.write().await;
-            let seq_num = inner.next_seq_num;
-            inner.next_seq_num += 1;
-            seq_num
-        };
+    async fn forge(&self, args: SpacesArgs<TestConditions>) -> Result<Self::Message, Self::Error> {
+        let operation = tx!(self.store, {
+            let (seq_num, backlink) = self
+                .store
+                .get_latest_entry_tx(&self.signing_key.verifying_key(), &DEFAULT_LOG_ID)
+                .await?
+                .map(|operation| (operation.header.seq_num + 1, Some(operation.hash)))
+                .unwrap_or((0, None));
 
-        let message = TestMessage {
-            seq_num,
-            verifying_key: self.verifying_key,
-            spaces_args: args,
-        };
+            let header = Header::builder()
+                .seq_num(seq_num)
+                .backlink(backlink)
+                .build(&self.signing_key, args);
 
-        self.store
-            .set_message(&message.id(), &message)
-            .await
-            .unwrap();
+            let operation = TestOperation::from_parts(header, None);
 
-        Ok(message)
+            self.store
+                .insert_operation(&operation.hash, &operation, &DEFAULT_LOG_ID)
+                .await?;
+
+            operation
+        });
+
+        Ok(operation)
     }
 }

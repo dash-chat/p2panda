@@ -423,7 +423,7 @@ where
                     .map_err(|err| DcgkaError::PreKeyRegistry(err))?;
                 y.pki = pki_i;
                 let prekey_bundle = prekey_bundle.ok_or(DcgkaError::MissingPreKeys(*recipient))?;
-                TwoParty::<KMG, LongTermKeyBundle>::init(prekey_bundle)
+                TwoParty::<KMG, LongTermKeyBundle>::init_to_send(prekey_bundle)
             }
         };
         let (y_2sm_i, ciphertext) =
@@ -442,13 +442,7 @@ where
     ) -> DcgkaResult<ID, OP, PKI, DGM, KMG, Vec<u8>> {
         let y_2sm = match y.two_party.remove(sender) {
             Some(y_2sm) => y_2sm,
-            None => {
-                let (pki_i, prekey_bundle) = PKI::key_bundle(y.pki, sender)
-                    .map_err(|err| DcgkaError::PreKeyRegistry(err))?;
-                y.pki = pki_i;
-                let prekey_bundle = prekey_bundle.ok_or(DcgkaError::MissingPreKeys(*sender))?;
-                TwoParty::<KMG, LongTermKeyBundle>::init(prekey_bundle)
-            }
+            None => TwoParty::<KMG, LongTermKeyBundle>::init_to_receive(),
         };
         let (y_2sm_i, y_my_keys_i, plaintext) =
             TwoParty::<KMG, LongTermKeyBundle>::receive(y_2sm, y.my_keys, ciphertext)?;
@@ -564,7 +558,9 @@ where
 /// If direct messages are sent along with a control message, we assume that the direct message for
 /// the appropriate recipient is delivered in the same call to process. Our algorithm never sends a
 /// direct message without an associated broadcast control message.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound(serialize = "DGM::State: Serialize, ID: Serialize"))]
+#[serde(bound(deserialize = "DGM::State: Deserialize<'de>, ID: Deserialize<'de>"))]
 pub struct DirectMessage<ID, OP, DGM>
 where
     DGM: GroupMembership<ID, OP>,
@@ -604,7 +600,9 @@ where
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound(serialize = "DGM::State: Serialize"))]
+#[serde(bound(deserialize = "DGM::State: Deserialize<'de>"))]
 pub enum DirectMessageContent<ID, OP, DGM>
 where
     DGM: GroupMembership<ID, OP>,
