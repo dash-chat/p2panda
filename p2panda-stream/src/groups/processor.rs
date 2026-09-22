@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 use std::borrow::Borrow;
-use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::fmt::Debug;
 use std::marker::PhantomData;
+use std::sync::Mutex;
 
 use p2panda_auth::group;
 use p2panda_auth::traits::{Conditions, Operation as GroupsOperationTrait};
@@ -44,7 +44,7 @@ impl GroupsResult {
 pub struct Groups<T, E, L, C = ()> {
     store: SqliteStore,
     notify: Notify,
-    queue: RefCell<VecDeque<(T, GroupsResult)>>,
+    queue: Mutex<VecDeque<(T, GroupsResult)>>,
     _marker: PhantomData<(E, L, C)>,
 }
 
@@ -58,7 +58,7 @@ where
         Self {
             store,
             notify: Notify::new(),
-            queue: RefCell::new(VecDeque::new()),
+            queue: Mutex::new(VecDeque::new()),
             _marker: PhantomData,
         }
     }
@@ -135,7 +135,7 @@ where
             (input, GroupsResult::Noop)
         };
 
-        self.queue.borrow_mut().push_back(result);
+        self.queue.lock().expect("queue lock poisoned").push_back(result);
         self.notify.notify_one(); // Wake up any pending recv.
 
         Ok(())
@@ -143,7 +143,7 @@ where
 
     async fn next(&self) -> Result<Self::Output, Self::Error> {
         loop {
-            if let Some(item) = self.queue.borrow_mut().pop_front() {
+            if let Some(item) = self.queue.lock().expect("queue lock poisoned").pop_front() {
                 return Ok(item);
             }
 
