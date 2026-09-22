@@ -57,6 +57,7 @@ Highlights are marked with a pancake 🥞
 - node: Add groups processor to pipeline [#1485](https://github.com/p2panda/p2panda/pull/1485)
 - node: Groups hook for associating group logs with topic [#1487](https://github.com/p2panda/p2panda/pull/1487)
 - node: Debouncer w/ throttle for repair task [#1499](https://github.com/p2panda/p2panda/pull/1499)
+- node: Add custom_cursor_name optional param to Node::stream_from [#1408](https://github.com/p2panda/p2panda/pull/1408)
 
 ### Changed
 
