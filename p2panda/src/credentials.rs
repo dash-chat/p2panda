@@ -46,6 +46,19 @@ impl Credentials {
         Self(Arc::new(inner))
     }
 
+    /// Builds credentials from keys held elsewhere, for applications which persist their own
+    /// identity rather than generating it here.
+    pub fn from_keys(signing_key: SigningKey, identity_secret_key: SecretKey) -> Self {
+        Self(Arc::new(Inner {
+            signing_key,
+            identity_secret_key,
+        }))
+    }
+
+    pub fn signing_key(&self) -> SigningKey {
+        self.0.signing_key.clone()
+    }
+
     pub fn verifying_key(&self) -> VerifyingKey {
         self.0.signing_key.verifying_key()
     }
