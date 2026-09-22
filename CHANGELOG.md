@@ -49,6 +49,7 @@ Highlights are marked with a pancake 🥞
 - sync: Method to resolve log heights from topic [#1405](https://github.com/p2panda/p2panda/pull/1405)
 - sync: Re-export -stream ingest_operation in `api` module [#1406](https://github.com/p2panda/p2panda/pull/1406)
 - stream: Forward events of already processed operations in spaces processor [#1430](https://github.com/p2panda/p2panda/pull/1430)
+- node: Add custom_cursor_name optional param to Node::stream_from [#1408](https://github.com/p2panda/p2panda/pull/1408)
 
 ### Changed
 
