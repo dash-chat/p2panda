@@ -91,9 +91,13 @@ where
             },
             ingest: ProcessorStatus::Pending,
             orderer_args: OrdererArgs::Process {
-                dependencies: match &spaces_args {
-                    Some(args) => args.dependencies(),
-                    None => vec![],
+                // Groups operations carry their own dependencies and must be ordered
+                // against them too, otherwise the groups processor sees an operation
+                // before its parent and rejects it as a missing dependency.
+                dependencies: match (&spaces_args, &groups_args) {
+                    (Some(args), _) => args.dependencies(),
+                    (None, Some(args)) => args.dependencies.clone(),
+                    (None, None) => vec![],
                 },
             },
             orderer: ProcessorStatus::Pending,
