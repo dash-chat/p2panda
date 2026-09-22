@@ -332,7 +332,7 @@ impl Node {
     where
         M: Serialize + for<'a> Deserialize<'a> + Send + 'static,
     {
-        self.stream_from(topic, StreamFrom::Frontier).await
+        self.stream_from(topic, StreamFrom::Frontier, None).await
     }
 
     /// Eventually consistent publish and subscribe stream of messages from a given position.
@@ -344,11 +344,12 @@ impl Node {
         &self,
         topic: impl Into<Topic>,
         from: StreamFrom,
+        custom_cursor_name: Option<String>,
     ) -> Result<(StreamPublisher<M>, StreamSubscription<M>), CreateStreamError>
     where
         M: Serialize + for<'a> Deserialize<'a> + Send + 'static,
     {
-        self.stream_from_inner(topic, from, ProcessorHooksList::new())
+        self.stream_from_inner(topic, from, custom_cursor_name, ProcessorHooksList::new())
             .await
     }
 
@@ -357,6 +358,7 @@ impl Node {
         &self,
         topic: impl Into<Topic>,
         from: StreamFrom,
+        custom_cursor_name: Option<String>,
         post_pipeline_hooks: ProcessorHooksList<Event>,
     ) -> Result<(StreamPublisher<M>, StreamSubscription<M>), CreateStreamError>
     where
@@ -393,6 +395,7 @@ impl Node {
             pipeline,
             self.events_tx.clone(),
             from,
+            custom_cursor_name,
         )
         .await
         .map_err(|err| CreateStreamError(err.to_string()))?;
@@ -642,7 +645,8 @@ impl Node {
         ));
         post_pipeline.push(MemberAssociationHook::new(self.id(), self.store.clone()));
 
-        self.stream_from_inner(topic, from, post_pipeline).await
+        self.stream_from_inner(topic, from, None, post_pipeline)
+            .await
     }
 
     pub async fn create_space<M>(
