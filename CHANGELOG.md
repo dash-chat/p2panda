@@ -63,6 +63,7 @@ Highlights are marked with a pancake 🥞
 - node: Efficient encoding of authenticated member info (for QR codes, etc.) [#1547](https://github.com/p2panda/p2panda/pull/1547)
 - node: Move member log association to hook and dispatch key bundle operations for live-mode [#1550](https://github.com/p2panda/p2panda/pull/1550)
 - node: Add high-level spaces docs and introduce method-specific errors [#1527](https://github.com/p2panda/p2panda/pull/1527)
+- node: Add custom_cursor_name optional param to Node::stream_from [#1408](https://github.com/p2panda/p2panda/pull/1408)
 
 ### Changed
 
