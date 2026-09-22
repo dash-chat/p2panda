@@ -101,11 +101,15 @@ pub(crate) async fn processed_stream<M>(
     forge: OperationForge,
     pipeline: Pipeline<LogId, Extensions, Topic>,
     from: StreamFrom,
+    custom_cursor_name: Option<String>,
 ) -> Result<(StreamPublisher<M>, StreamSubscription<M>), CreateStreamError>
 where
     M: Serialize + for<'a> Deserialize<'a> + Send + 'static,
 {
-    let acked = Acked::new(store.clone(), topic);
+    let acked = match custom_cursor_name {
+        Some(cursor_name) => Acked::from_name(store.clone(), topic, cursor_name),
+        None => Acked::new(store.clone(), topic),
+    };
 
     // Keep around the sync handle on both the publisher and subscriber ends to keep it running
     // even if one half got dropped. An offline node has no sync handle.

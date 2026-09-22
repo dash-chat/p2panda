@@ -279,7 +279,7 @@ impl Node {
     where
         M: Serialize + for<'a> Deserialize<'a> + Send + 'static,
     {
-        self.stream_from(topic, StreamFrom::Frontier).await
+        self.stream_from(topic, StreamFrom::Frontier, None).await
     }
 
     /// Eventually consistent publish and subscribe stream of messages from a given position.
@@ -291,6 +291,7 @@ impl Node {
         &self,
         topic: impl Into<Topic>,
         from: StreamFrom,
+        custom_cursor_name: Option<String>,
     ) -> Result<(StreamPublisher<M>, StreamSubscription<M>), CreateStreamError>
     where
         M: Serialize + for<'a> Deserialize<'a> + Send + 'static,
@@ -317,6 +318,7 @@ impl Node {
             self.forge.clone(),
             self.pipeline.clone(),
             from,
+            custom_cursor_name,
         )
         .await
         .map_err(|err| CreateStreamError(err.to_string()))?;

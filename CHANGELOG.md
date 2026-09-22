@@ -9,6 +9,10 @@ Highlights are marked with a pancake 🥞
 
 ## [Unreleased]
 
+### Added
+
+- node: Add custom_cursor_name optional param to Node::stream_from [#1408](https://github.com/p2panda/p2panda/pull/1408)
+
 ### Changed
 
 - Update to iroh `v1.0.0-rc.1` [#1191](https://github.com/p2panda/p2panda/pull/1191)
