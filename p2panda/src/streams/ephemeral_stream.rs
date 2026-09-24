@@ -279,6 +279,12 @@ where
         self.topic
     }
 
+    /// The gossip layer's maximum message size in bytes. It bounds the whole signed envelope
+    /// around a published message, not the message alone.
+    pub fn max_message_size(&self) -> usize {
+        self.inner.max_message_size()
+    }
+
     /// Publish a message into an ephemeral topic stream.
     ///
     /// Only currently reachable and subscribed peers will receive published messages.
