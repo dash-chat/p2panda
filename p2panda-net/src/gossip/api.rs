@@ -305,6 +305,12 @@ impl GossipHandle {
         }
     }
 
+    /// The configured maximum message size in bytes; larger messages are refused by
+    /// [`publish`](Self::publish).
+    pub fn max_message_size(&self) -> usize {
+        self.max_message_size
+    }
+
     /// Publishes a message to the stream.
     ///
     /// An error will be returned if the size of the bytes exceeds the configured maximum message
