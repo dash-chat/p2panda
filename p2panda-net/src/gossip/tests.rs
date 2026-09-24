@@ -748,6 +748,7 @@ async fn large_message_error() {
 
     // Subscribe to gossip topic.
     let handle = gossip.stream(topic).await.unwrap();
+    assert_eq!(handle.max_message_size(), DEFAULT_MAX_MESSAGE_SIZE);
 
     // The byte length of the hex-encoded published message will be 5000.
     let large_str = hex::encode([255; 2500]);
