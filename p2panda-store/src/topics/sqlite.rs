@@ -95,10 +95,7 @@ where
     }
 
     /// Retrieve a list of all logs associated with the provided topic for all known authors.
-    async fn resolve(
-        &self,
-        topic: &T,
-    ) -> Result<BTreeMap<VerifyingKey, Vec<L>>, Self::Error> {
+    async fn resolve(&self, topic: &T) -> Result<BTreeMap<VerifyingKey, Vec<L>>, Self::Error> {
         let data_ids = self
             .execute(async |pool| {
                 query_as::<_, (String, Vec<u8>)>(

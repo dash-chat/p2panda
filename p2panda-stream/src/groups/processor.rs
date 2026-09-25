@@ -135,7 +135,10 @@ where
             (input, GroupsResult::Noop)
         };
 
-        self.queue.lock().expect("queue lock poisoned").push_back(result);
+        self.queue
+            .lock()
+            .expect("queue lock poisoned")
+            .push_back(result);
         self.notify.notify_one(); // Wake up any pending recv.
 
         Ok(())
