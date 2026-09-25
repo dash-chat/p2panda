@@ -99,7 +99,7 @@ impl AddressLookup for AddressBookDiscovery {
 
             // Connection attempts that failed while we had other addresses may have failed on our
             // side (e.g. we were offline). Forget them before announcing the new addresses, which
-            // triggers re-joins, so that the other nodes can be resolved and dialed again.
+            // triggers re-joins, so that discovery doesn't skip the other nodes as stale.
             if let Err(err) = address_book.forget_failed_connections().await {
                 warn!("could not forget failed connections in address book: {err:#?}");
             }
@@ -140,14 +140,9 @@ impl AddressLookup for AddressBookDiscovery {
                     .filter_map(|event| async {
                         match event.value {
                             Some(node_info) => {
-                                // Abort resolving if node info has been marked as "stale".
-                                if node_info.is_stale() {
-                                    return Some(Err(AddressLookupError::from_err_any(
-                                        PROVENANCE,
-                                        "node is marked as stale",
-                                    )));
-                                }
-
+                                // Resolve stale nodes too: this stream never ends, so withholding
+                                // their addresses leaves the dial pending forever instead of
+                                // failing, and a failed dial is what makes gossip rejoin.
                                 match iroh::EndpointAddr::try_from(node_info) {
                                     Ok(endpoint_addr) => {
                                         let info = EndpointInfo::from(endpoint_addr);

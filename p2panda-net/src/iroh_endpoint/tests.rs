@@ -1,11 +1,16 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
+use iroh::address_lookup::AddressLookup;
 use iroh::protocol::ProtocolHandler;
 use p2panda_core::test_utils::setup_logging;
+use tokio_stream::StreamExt;
 
 use crate::address_book::AddressBook;
+use crate::address_book::report::ConnectionOutcome;
 use crate::iroh_endpoint::Endpoint;
+use crate::iroh_endpoint::discovery::AddressBookDiscovery;
 use crate::test_utils::test_args;
+use crate::utils::from_verifying_key;
 
 const ECHO_PROTOCOL_ID: &[u8] = b"test/echo/v1";
 
@@ -84,4 +89,37 @@ async fn establish_connection() {
 
     // Shut down connection and actors.
     connection.close(0u32.into(), b"bye!");
+}
+
+#[tokio::test]
+async fn resolve_yields_addresses_of_stale_nodes() {
+    setup_logging();
+
+    let args = test_args();
+    let mut peer_args = test_args();
+
+    let address_book = AddressBook::builder().spawn().await.unwrap();
+    let peer_info = peer_args.node_info();
+    address_book
+        .insert_node_info(peer_info.clone())
+        .await
+        .unwrap();
+    address_book
+        .report(peer_info.node_id, ConnectionOutcome::Failed)
+        .await
+        .unwrap();
+    let stored = address_book
+        .node_info(peer_info.node_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(stored.metrics.is_stale());
+
+    let discovery = AddressBookDiscovery::new(args.signing_key.clone(), address_book);
+    let mut stream = discovery
+        .resolve(from_verifying_key(peer_info.node_id))
+        .unwrap();
+    let item = stream.next().await.unwrap();
+
+    assert!(item.is_ok(), "stale node did not resolve: {item:?}");
 }
