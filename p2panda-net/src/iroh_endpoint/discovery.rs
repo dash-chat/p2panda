@@ -133,14 +133,9 @@ impl AddressLookup for AddressBookDiscovery {
                     .filter_map(|event| async {
                         match event.value {
                             Some(node_info) => {
-                                // Abort resolving if node info has been marked as "stale".
-                                if node_info.is_stale() {
-                                    return Some(Err(AddressLookupError::from_err_any(
-                                        PROVENANCE,
-                                        "node is marked as stale",
-                                    )));
-                                }
-
+                                // Resolve stale nodes too: this stream never ends, so withholding
+                                // their addresses leaves the dial pending forever instead of
+                                // failing, and a failed dial is what makes gossip rejoin.
                                 match iroh::EndpointAddr::try_from(node_info) {
                                     Ok(endpoint_addr) => {
                                         let info = EndpointInfo::from(endpoint_addr);
