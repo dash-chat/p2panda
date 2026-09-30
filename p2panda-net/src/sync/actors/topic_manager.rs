@@ -529,6 +529,7 @@ where
 
     /// Remove a session from all manager state mappings.
     fn drop_session(state: &mut TopicManagerState<M>, id: SyncSessionId) {
+        state.manager.end_session(id);
         state.session_topic_map.drop(id);
         state.node_session_map.iter_mut().for_each(|(_, sessions)| {
             sessions.remove(&id);

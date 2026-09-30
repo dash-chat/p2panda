@@ -181,6 +181,12 @@ where
         })
     }
 
+    fn end_session(&mut self, session_id: u64) {
+        self.from_session_tx.retain(|(id, _), _| *id != session_id);
+        self.from_session_rx.retain(|(id, _), _| *id != session_id);
+        self.session_topic_map.drop(session_id);
+    }
+
     /// Subscribe to the event stream for all running sync sessions.
     fn subscribe(&mut self) -> impl Stream<Item = FromSync<Self::Event>> + Send + Unpin + 'static {
         let (manager_tx, manager_rx) = mpsc::channel(CHANNEL_BUFFER);
@@ -256,6 +262,34 @@ mod tests {
     async fn from_args() {
         let store = SqliteStore::temporary().await;
         let _: TestTopicSyncManager = Manager::from_args(store);
+    }
+
+    #[tokio::test]
+    async fn ended_sessions_are_forgotten() {
+        let peer = Peer::new(0).await;
+        let mut manager = TestTopicSyncManager::new(peer.store.clone());
+        let config = SessionConfig {
+            topic: Topic::random(),
+            remote: Peer::new(1).await.id(),
+            live_mode: true,
+        };
+
+        let _ended = manager.session(0, &config).await;
+        let _running = manager.session(1, &config).await;
+        manager.end_session(0);
+
+        let session_ids =
+            |keys: Vec<&(u64, _)>| keys.into_iter().map(|(id, _)| *id).collect::<Vec<_>>();
+        assert_eq!(
+            session_ids(manager.from_session_tx.keys().collect()),
+            vec![1]
+        );
+        assert_eq!(
+            session_ids(manager.from_session_rx.keys().collect()),
+            vec![1]
+        );
+        assert!(manager.session_topic_map.sender(0).is_none());
+        assert!(manager.session_topic_map.sender(1).is_some());
     }
 
     #[tokio::test]
