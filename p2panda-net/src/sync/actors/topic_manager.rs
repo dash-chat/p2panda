@@ -368,7 +368,10 @@ where
                     );
                 };
 
-                let node_sessions = state.node_session_map.get(&node_id).cloned();
+                // Forgotten here rather than once they end: a session whose connection went away
+                // with the network never gets the close, and would otherwise count as running and
+                // stop a fresh one from starting when the node comes back.
+                let node_sessions = state.node_session_map.remove(&node_id);
 
                 if let Some(node_sessions) = node_sessions {
                     let topic_sessions = state.session_topic_map.sessions(&state.topic);
