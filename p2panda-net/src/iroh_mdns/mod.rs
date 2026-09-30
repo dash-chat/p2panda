@@ -6,6 +6,7 @@ mod actor;
 mod api;
 mod builder;
 mod config;
+mod events;
 #[cfg(feature = "supervisor")]
 mod supervisor;
 #[cfg(test)]
@@ -14,3 +15,4 @@ mod tests;
 pub use api::{MdnsDiscovery, MdnsDiscoveryError};
 pub use builder::Builder;
 pub use config::MdnsDiscoveryMode;
+pub use events::LocalNodeEvent;

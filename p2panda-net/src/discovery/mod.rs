@@ -7,6 +7,7 @@ mod backoff;
 mod builder;
 mod config;
 mod events;
+mod local_nodes;
 #[cfg(feature = "supervisor")]
 mod supervisor;
 #[cfg(test)]
