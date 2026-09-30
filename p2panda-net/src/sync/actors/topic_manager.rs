@@ -26,6 +26,11 @@ use crate::{NodeId, ProtocolId};
 
 const RETRY_RATE: Duration = Duration::from_secs(5);
 
+/// Each failed session with a node doubles the wait before retrying it, up to this. A node that
+/// went away for good would otherwise be dialled every few seconds on every topic we share with
+/// it, and with enough of them that crowds out the nodes we can actually reach.
+const MAX_RETRY_DELAY: Duration = Duration::from_secs(5 * 60);
+
 type SessionSink<M> = Pin<
     Box<
         dyn Sink<
@@ -76,6 +81,7 @@ where
     session_topic_map: SessionTopicMap<Topic, SessionSink<M>>,
     node_session_map: HashMap<NodeId, HashSet<SyncSessionId>>,
     active_sync_set: HashSet<NodeId>,
+    retry_delays: HashMap<NodeId, Duration>,
     actor_session_id_map: HashMap<ActorId, SyncSessionId>,
     next_session_id: SyncSessionId,
     sync_poller_actor: ActorRef<ToSyncPoller>,
@@ -136,6 +142,7 @@ where
             session_topic_map: SessionTopicMap::default(),
             node_session_map: HashMap::new(),
             active_sync_set: HashSet::new(),
+            retry_delays: HashMap::new(),
             next_session_id: 0,
             actor_session_id_map: HashMap::new(),
             sync_poller_actor,
@@ -179,6 +186,7 @@ where
                 );
 
                 state.active_sync_set.insert(node_id);
+
                 let config = SessionConfig {
                     topic,
                     remote: node_id,
@@ -275,6 +283,9 @@ where
                     %live_mode,
                     "accept sync session"
                 );
+
+                // It reached us, so it is there to be reached.
+                state.retry_delays.remove(&node_id);
 
                 let config = SessionConfig {
                     topic,
@@ -386,6 +397,9 @@ where
                             "sync session terminated"
                         );
 
+                        if let Some(remote_node_id) = Self::remote_of(state, session_id) {
+                            state.retry_delays.remove(&remote_node_id);
+                        }
                         Self::drop_session(state, session_id);
                     }
                     None => {
@@ -408,18 +422,7 @@ where
                         );
 
                         // Retrieve the node id and current sessions from the node session map.
-                        let Some(remote_node_id) =
-                            state
-                                .node_session_map
-                                .iter()
-                                .find_map(|(node_id, sessions)| {
-                                    if sessions.contains(&session_id) {
-                                        Some(*node_id)
-                                    } else {
-                                        None
-                                    }
-                                })
-                        else {
+                        let Some(remote_node_id) = Self::remote_of(state, session_id) else {
                             // If it wasn't present then it means we no longer want to sync with
                             // this node, clear up any session state and return.
                             Self::drop_session(state, session_id);
@@ -440,10 +443,16 @@ where
                             return Ok(());
                         };
 
-                        // Send a retry message to the actor after a 5 second delay. The handle
-                        // is not awaited: it resolves only once the message is sent, and waiting
-                        // for it here would hold this actor for the whole delay.
-                        let _ = myself.send_after(RETRY_RATE, move || ToTopicManager::Retry {
+                        let delay = state
+                            .retry_delays
+                            .get(&remote_node_id)
+                            .map_or(RETRY_RATE, |delay| (*delay * 2).min(MAX_RETRY_DELAY));
+                        state.retry_delays.insert(remote_node_id, delay);
+
+                        // Send a retry message to the actor after the delay. The handle is not
+                        // awaited: it resolves only once the message is sent, and waiting for it
+                        // here would hold this actor for the whole delay.
+                        let _ = myself.send_after(delay, move || ToTopicManager::Retry {
                             node_id: remote_node_id,
                             // TODO: For now we default to live-mode is true but we should
                             // rather retrieve this state from the failed sync session.
@@ -509,6 +518,13 @@ where
         state.actor_session_id_map.insert(actor_id, session_id);
 
         (session_id, session)
+    }
+
+    fn remote_of(state: &TopicManagerState<M>, id: SyncSessionId) -> Option<NodeId> {
+        state
+            .node_session_map
+            .iter()
+            .find_map(|(node_id, sessions)| sessions.contains(&id).then_some(*node_id))
     }
 
     /// Remove a session from all manager state mappings.
