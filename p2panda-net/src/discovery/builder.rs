@@ -10,12 +10,14 @@ use crate::discovery::actors::{DiscoveryManager, DiscoveryManagerArgs};
 use crate::discovery::config::DiscoveryConfig;
 use crate::discovery::{Discovery, DiscoveryError};
 use crate::iroh_endpoint::Endpoint;
+use crate::iroh_mdns::MdnsDiscovery;
 
 pub struct Builder {
     config: Option<DiscoveryConfig>,
     rng: Option<ChaCha20Rng>,
     address_book: AddressBook,
     endpoint: Endpoint,
+    mdns: Option<MdnsDiscovery>,
 }
 
 impl Builder {
@@ -25,11 +27,19 @@ impl Builder {
             rng: None,
             address_book,
             endpoint,
+            mdns: None,
         }
     }
 
     pub fn config(mut self, config: DiscoveryConfig) -> Self {
         self.config = Some(config);
+        self
+    }
+
+    /// Discover nodes found on the local-area network right away, instead of waiting for a random
+    /// walk to come across them.
+    pub fn mdns(mut self, mdns: MdnsDiscovery) -> Self {
+        self.mdns = Some(mdns);
         self
     }
 
@@ -44,7 +54,7 @@ impl Builder {
         let rng = self
             .rng
             .unwrap_or(ChaCha20Rng::try_from_rng(&mut SysRng).expect("enough entropy"));
-        (config, rng, self.address_book, self.endpoint)
+        (config, rng, self.address_book, self.endpoint, self.mdns)
     }
 
     pub async fn spawn(self) -> Result<Discovery, DiscoveryError> {
