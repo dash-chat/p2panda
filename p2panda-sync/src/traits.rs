@@ -50,4 +50,8 @@ pub trait Manager<T> {
 
     /// Subscribe to the manager event stream.
     fn subscribe(&mut self) -> impl Stream<Item = FromSync<Self::Event>> + Send + Unpin + 'static;
+
+    /// Forget a session that has ended, successfully or not. Whatever the manager holds for it
+    /// would otherwise stay for as long as the manager does.
+    fn end_session(&mut self, _session_id: u64) {}
 }
