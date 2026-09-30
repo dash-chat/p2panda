@@ -187,6 +187,21 @@ where
 
                 state.active_sync_set.insert(node_id);
 
+                // Every re-join of the overlay reports its neighbours again, all at once, and a node
+                // we already have a session with needs no second one.
+                if state
+                    .node_session_map
+                    .get(&node_id)
+                    .is_some_and(|sessions| !sessions.is_empty())
+                {
+                    debug!(
+                        remote = %node_id.fmt_short(),
+                        topic = %topic.fmt_short(),
+                        "skip initiate sync: a sync session is already running"
+                    );
+                    return Ok(());
+                }
+
                 let config = SessionConfig {
                     topic,
                     remote: node_id,
