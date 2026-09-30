@@ -32,7 +32,9 @@ use crate::discovery::actors::session::{
 };
 use crate::discovery::actors::walker::{DiscoveryWalker, ToDiscoveryWalker, WalkFromHere};
 use crate::discovery::events::{DiscoveryEvent, SessionRole};
+use crate::discovery::local_nodes;
 use crate::iroh_endpoint::Endpoint;
+use crate::iroh_mdns::MdnsDiscovery;
 use crate::utils::{ShortFormat, to_verifying_key};
 
 /// Maximum duration of inactivity to accept before timing out the connection.
@@ -47,6 +49,10 @@ pub enum ToDiscoveryManager {
     /// A reference to the walker actor which initiated this session is kept, so the result of the
     /// session can be reported back to it.
     InitiateSession(NodeId, ActorRef<ToDiscoveryWalker>),
+
+    /// Initiate a discovery session with a node on our local-area network, outside of any random
+    /// walk. See [`crate::discovery::local_nodes`].
+    InitiateLocalSession(NodeId),
 
     /// Accept a discovery session coming in from a remote node.
     AcceptSession(NodeId, iroh::endpoint::Connection),
@@ -88,6 +94,8 @@ pub struct DiscoveryManagerState {
     events_tx: broadcast::Sender<DiscoveryEvent>,
     quic_transport_config: QuicTransportConfig,
     metrics: DiscoveryMetrics,
+    mdns: Option<MdnsDiscovery>,
+    local_nodes_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl DiscoveryManagerState {
@@ -161,7 +169,7 @@ pub enum DiscoverySessionInfo {
     Initiated {
         remote_node_id: NodeId,
         session_id: DiscoverySessionId,
-        walker_ref: ActorRef<ToDiscoveryWalker>,
+        walker_ref: Option<ActorRef<ToDiscoveryWalker>>,
         session_ref: ActorRef<ToDiscoverySession>,
         started_at: Instant,
         #[allow(unused)]
@@ -216,7 +224,13 @@ pub struct WalkerInfo {
     handle: JoinHandle<()>,
 }
 
-pub type DiscoveryManagerArgs = (DiscoveryConfig, ChaCha20Rng, AddressBook, Endpoint);
+pub type DiscoveryManagerArgs = (
+    DiscoveryConfig,
+    ChaCha20Rng,
+    AddressBook,
+    Endpoint,
+    Option<MdnsDiscovery>,
+);
 
 #[derive(Debug, Default)]
 pub struct DiscoveryManager;
@@ -233,7 +247,7 @@ impl ThreadLocalActor for DiscoveryManager {
         myself: ActorRef<Self::Msg>,
         args: Self::Arguments,
     ) -> Result<Self::State, ActorProcessingErr> {
-        let (config, rng, address_book, endpoint) = args;
+        let (config, rng, address_book, endpoint, mdns) = args;
         let pool = ThreadLocalActorSpawner::new();
         let my_node_id = endpoint.node_id();
 
@@ -298,6 +312,8 @@ impl ThreadLocalActor for DiscoveryManager {
             events_tx,
             quic_transport_config,
             metrics: DiscoveryMetrics::default(),
+            mdns,
+            local_nodes_handle: None,
         })
     }
 
@@ -307,6 +323,10 @@ impl ThreadLocalActor for DiscoveryManager {
         state: &mut Self::State,
     ) -> Result<(), ActorProcessingErr> {
         if let Some(handle) = &state.watch_handle {
+            handle.abort();
+        }
+
+        if let Some(handle) = &state.local_nodes_handle {
             handle.abort();
         }
 
@@ -331,6 +351,18 @@ impl ThreadLocalActor for DiscoveryManager {
                         },
                     )
                     .await?;
+
+                if let Some(mdns) = &state.mdns {
+                    state.local_nodes_handle = Some(
+                        local_nodes::spawn(
+                            state.my_node_id,
+                            state.address_book.clone(),
+                            mdns.events(),
+                            myself.clone(),
+                        )
+                        .await?,
+                    );
+                }
 
                 // Watch for topic changes of our node (to find out if user subscribed to a new
                 // topic) and watch for transport info changing. If yes, we want to reset the
@@ -416,7 +448,52 @@ impl ThreadLocalActor for DiscoveryManager {
                         remote_node_id,
                         session_id,
                         session_ref,
-                        walker_ref,
+                        walker_ref: Some(walker_ref),
+                        started_at: Instant::now(),
+                        handle,
+                    },
+                );
+
+                // Inform subscribers about this discovery "system" event.
+                let _ = state.events_tx.send(DiscoveryEvent::SessionStarted {
+                    role: SessionRole::Initiated,
+                    remote_node_id,
+                });
+            }
+            ToDiscoveryManager::InitiateLocalSession(remote_node_id) => {
+                let already_initiated = state.sessions.values().any(|session| {
+                    matches!(session, DiscoverySessionInfo::Initiated { .. })
+                        && session.remote_node_id() == remote_node_id
+                });
+                if already_initiated {
+                    return Ok(());
+                }
+
+                let session_id = state.next_session_id();
+
+                let (session_ref, handle) = DiscoverySession::spawn_linked(
+                    None,
+                    DiscoverySessionArguments {
+                        my_node_id: state.my_node_id,
+                        remote_node_id,
+                        store: state.address_book.store().await?,
+                        endpoint: state.endpoint.clone(),
+                        manager_ref: myself.clone(),
+                        quic_transport_config: state.quic_transport_config.clone(),
+                        args: DiscoverySessionRole::Connect,
+                    },
+                    myself.clone().into(),
+                    state.pool.clone(),
+                )
+                .await?;
+
+                state.sessions.insert(
+                    session_ref.get_id(),
+                    DiscoverySessionInfo::Initiated {
+                        remote_node_id,
+                        session_id,
+                        session_ref,
+                        walker_ref: None,
                         started_at: Instant::now(),
                         handle,
                     },
@@ -487,7 +564,11 @@ impl ThreadLocalActor for DiscoveryManager {
                     insert_address_book(state, discovery_result.clone()).await;
                 state.metrics.newly_learned_transport_infos += newly_learned_transport_infos;
 
-                if let DiscoverySessionInfo::Initiated { ref walker_ref, .. } = session_info {
+                if let DiscoverySessionInfo::Initiated {
+                    walker_ref: Some(ref walker_ref),
+                    ..
+                } = session_info
+                {
                     // Continue random walk.
                     state.next_walk_step(
                         walker_ref.clone(),
@@ -532,7 +613,11 @@ impl ThreadLocalActor for DiscoveryManager {
                     "failed discovery session: {err:#}"
                 );
 
-                if let DiscoverySessionInfo::Initiated { ref walker_ref, .. } = session_info {
+                if let DiscoverySessionInfo::Initiated {
+                    walker_ref: Some(ref walker_ref),
+                    ..
+                } = session_info
+                {
                     // Continue random walk.
                     state.repeat_last_walk_step(walker_ref.clone());
                 }

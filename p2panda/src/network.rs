@@ -70,10 +70,12 @@ impl Network {
             MdnsDiscoveryMode::Disabled => None,
         };
 
-        let discovery = Discovery::builder(address_book.clone(), endpoint.clone())
-            .config(config.discovery)
-            .spawn()
-            .await?;
+        let mut discovery =
+            Discovery::builder(address_book.clone(), endpoint.clone()).config(config.discovery);
+        if let Some(mdns) = &mdns {
+            discovery = discovery.mdns(mdns.clone());
+        }
+        let discovery = discovery.spawn().await?;
 
         let gossip = Gossip::builder(address_book.clone(), endpoint.clone())
             .config(config.gossip)

@@ -5,6 +5,7 @@ use iroh::address_lookup::{AddressLookup, EndpointData, UserData};
 use iroh_mdns_address_lookup::{DiscoveryEvent, MdnsAddressLookup};
 use ractor::thread_local::ThreadLocalActor;
 use ractor::{ActorProcessingErr, ActorRef};
+use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
 use tracing::{debug, trace, warn};
 
@@ -13,7 +14,7 @@ use crate::address_book::AddressBook;
 use crate::addrs::{AuthenticatedTransportInfo, NodeInfo, NodeTransportInfo, TransportInfo};
 use crate::iroh_endpoint::Endpoint;
 use crate::iroh_endpoint::user_data::UserDataTransportInfo;
-use crate::iroh_mdns::MdnsDiscoveryMode;
+use crate::iroh_mdns::{LocalNodeEvent, MdnsDiscoveryMode};
 use crate::utils::{from_verifying_key, to_verifying_key};
 
 const MDNS_SERVICE_NAME: &str = "p2pandav1";
@@ -35,16 +36,25 @@ pub enum ToMdns {
         endpoint_addr: Option<iroh::EndpointAddr>,
         user_data: Option<UserData>,
     },
+
+    /// mDNS discovery service stopped hearing from an endpoint.
+    ExpiredEndpoint(iroh::EndpointId),
 }
 
 pub struct MdnsState {
     my_node_id: NodeId,
     address_book: AddressBook,
+    local_node_events_tx: broadcast::Sender<LocalNodeEvent>,
     service: Option<MdnsAddressLookup>,
     handle: Option<JoinHandle<()>>,
 }
 
-pub type MdnsActorArgs = (MdnsDiscoveryMode, AddressBook, Endpoint);
+pub type MdnsActorArgs = (
+    MdnsDiscoveryMode,
+    AddressBook,
+    Endpoint,
+    broadcast::Sender<LocalNodeEvent>,
+);
 
 #[derive(Default)]
 pub struct MdnsActor;
@@ -61,7 +71,7 @@ impl ThreadLocalActor for MdnsActor {
         myself: ActorRef<Self::Msg>,
         args: Self::Arguments,
     ) -> Result<Self::State, ActorProcessingErr> {
-        let (mode, address_book, endpoint) = args;
+        let (mode, address_book, endpoint, local_node_events_tx) = args;
         let my_node_id = endpoint.node_id();
 
         // Automatically initialise mDNS service after starting actor.
@@ -70,6 +80,7 @@ impl ThreadLocalActor for MdnsActor {
         Ok(MdnsState {
             my_node_id,
             address_book,
+            local_node_events_tx,
             service: None,
             handle: None,
         })
@@ -140,7 +151,7 @@ impl ThreadLocalActor for MdnsActor {
                                                 endpoint_addr: Some(endpoint_info.into()),
                                             });
                                         }
-                                        Some(DiscoveryEvent::Expired { .. }) => {
+                                        Some(DiscoveryEvent::Expired { endpoint_id }) => {
                                             // At this point we know another node has not responded anymore
                                             // within the local network.
                                             //
@@ -150,6 +161,7 @@ impl ThreadLocalActor for MdnsActor {
                                             //
                                             // Additionally we don't know if that node might actually still
                                             // be reachable (just not inside the same local area network).
+                                            let _ = myself.send_message(ToMdns::ExpiredEndpoint(endpoint_id));
                                         }
                                         Some(_) => {
                                             // `DiscoveryEvent` is marked as non-exhaustive so we
@@ -236,7 +248,12 @@ impl ThreadLocalActor for MdnsActor {
                                 %endpoint_id,
                                 "updating address book failed with error: {err:#?}"
                             );
+                            return Ok(());
                         }
+
+                        let _ = state
+                            .local_node_events_tx
+                            .send(LocalNodeEvent::Found(to_verifying_key(endpoint_id)));
                     }
                     Err(err) => {
                         trace!(
@@ -246,6 +263,11 @@ impl ThreadLocalActor for MdnsActor {
                         return Ok(());
                     }
                 }
+            }
+            ToMdns::ExpiredEndpoint(endpoint_id) => {
+                let _ = state
+                    .local_node_events_tx
+                    .send(LocalNodeEvent::Lost(to_verifying_key(endpoint_id)));
             }
             ToMdns::UpdateNodeInfo(node_info) => {
                 trace!("received updated node info");

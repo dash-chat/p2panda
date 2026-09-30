@@ -4,12 +4,12 @@ use std::sync::Arc;
 
 use ractor::ActorRef;
 use thiserror::Error;
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, broadcast};
 
 use crate::address_book::AddressBook;
 use crate::iroh_endpoint::Endpoint;
-use crate::iroh_mdns::Builder;
 use crate::iroh_mdns::actor::{MdnsActorArgs, ToMdns};
+use crate::iroh_mdns::{Builder, LocalNodeEvent};
 
 /// Resolve transport information for nearby nodes on the local-area network via multicast DNS
 /// (mDNS).
@@ -68,6 +68,11 @@ impl MdnsDiscovery {
 
     pub fn builder(address_book: AddressBook, endpoint: Endpoint) -> Builder {
         Builder::new(address_book, endpoint)
+    }
+
+    /// Subscribe to nodes appearing on and leaving the local-area network.
+    pub fn events(&self) -> broadcast::Receiver<LocalNodeEvent> {
+        self.args.3.subscribe()
     }
 }
 
