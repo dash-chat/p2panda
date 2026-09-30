@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 use ractor::thread_local::{ThreadLocalActor, ThreadLocalActorSpawner};
+use tokio::sync::broadcast;
 
 use crate::address_book::AddressBook;
 use crate::iroh_endpoint::Endpoint;
@@ -29,7 +30,13 @@ impl Builder {
 
     pub(crate) fn build_args(self) -> MdnsActorArgs {
         let config = self.mode.unwrap_or_default();
-        (config, self.address_book, self.endpoint)
+        let (local_node_events_tx, _) = broadcast::channel(64);
+        (
+            config,
+            self.address_book,
+            self.endpoint,
+            local_node_events_tx,
+        )
     }
 
     pub async fn spawn(self) -> Result<MdnsDiscovery, MdnsDiscoveryError> {
