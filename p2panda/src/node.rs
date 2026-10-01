@@ -558,13 +558,18 @@ impl Node {
     where
         M: Serialize + for<'a> Deserialize<'a> + Send + 'static,
     {
-        self.space_from(space_id, StreamFrom::Frontier).await
+        self.space_from(space_id, StreamFrom::Frontier, None).await
     }
 
+    /// Subscribe to a space from a given position.
+    ///
+    /// `custom_cursor_name` optionally namespaces the persisted stream cursor, see
+    /// [`Node::stream_from`].
     pub async fn space_from<M>(
         &self,
         space_id: impl Into<SpaceId>,
         from: StreamFrom,
+        custom_cursor_name: Option<String>,
     ) -> Result<(Space<M>, SpaceSubscription<M>), SubscribeSpaceError>
     where
         M: Serialize + for<'a> Deserialize<'a> + Send + 'static,
@@ -622,7 +627,9 @@ impl Node {
                 .await;
         }
 
-        let (tx, rx) = self.space_stream_from_inner(space_id, from).await?;
+        let (tx, rx) = self
+            .space_stream_from_inner(space_id, from, custom_cursor_name)
+            .await?;
 
         let egress_handle = self.egress.handle();
 
@@ -649,6 +656,7 @@ impl Node {
         &self,
         topic: impl Into<Topic>,
         from: StreamFrom,
+        custom_cursor_name: Option<String>,
     ) -> Result<(StreamPublisher<M>, StreamSubscription<M>), CreateStreamError>
     where
         M: Serialize + for<'a> Deserialize<'a> + Send + 'static,
@@ -657,7 +665,7 @@ impl Node {
         post_pipeline.push(SyncAuthoriserHook::new(self.sync_block_list.clone()));
         post_pipeline.push(MemberAssociationHook::new(self.id(), self.store.clone()));
 
-        self.stream_from_inner(topic, from, None, true, post_pipeline)
+        self.stream_from_inner(topic, from, custom_cursor_name, true, post_pipeline)
             .await
     }
 
@@ -679,7 +687,7 @@ impl Node {
 
         // Establish a topic stream using the space id as a topic.
         let (tx, rx) = self
-            .space_stream_from_inner(space_id, StreamFrom::Frontier)
+            .space_stream_from_inner(space_id, StreamFrom::Frontier, None)
             .await?;
 
         // Create a space.
