@@ -104,6 +104,24 @@ pub(crate) async fn repair_space(
 
     store.commit(permit).await?;
 
+    // Only managers repair a space. Every repairing member publishes its own chain of membership
+    // pointers, and pointers from different members carry no dependency on each other, so with
+    // several repairers a space can receive a later auth message's pointer before an earlier
+    // one's and fail to apply it ("missing dependency"). Managers are the ones changing
+    // membership (which repairs first), so they are enough to keep a space up to date.
+    //
+    // TODO: Upstream should make pointer application order-independent, or let the orderer
+    // see the auth dependencies of a pointer.
+    let me = manager.id();
+    let i_manage = space_y
+        .groups_y
+        .members(space_y.group_id)
+        .iter()
+        .any(|(member, access)| *member == me && access.level.can_manage());
+    if !i_manage {
+        return Ok(false);
+    }
+
     let group_ids = match strategy {
         RepairStrategy::Global => groups_y.groups_global(),
         RepairStrategy::Partial(group_ids) => group_ids.clone(),

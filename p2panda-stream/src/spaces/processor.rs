@@ -13,6 +13,11 @@ use p2panda_store::Transaction;
 use p2panda_store::groups::GroupsStore;
 use p2panda_store::key_registry::KeyRegistryStore;
 use p2panda_store::key_secrets::KeySecretsStore;
+
+/// How often a message whose dependency has not been applied yet is retried, and how long to
+/// wait between attempts, see `Spaces::process`.
+const MISSING_DEPENDENCY_RETRIES: usize = 40;
+const MISSING_DEPENDENCY_RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(25);
 use p2panda_store::spaces::{SpacesMessageStore, SpacesStore};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -68,17 +73,41 @@ where
             SpacesProcessorArgs::Process { msg } => {
                 // Held until the resulting state is committed, so no other pipeline or local
                 // change persists a state computed from what we are about to overwrite.
-                let _mutating = self.manager.mutation_guard().await;
+                let mut mutating = self.manager.mutation_guard().await;
 
                 // Process incoming event.
+                //
+                // Every topic stream has its own pipeline and orderer. A dependency of this
+                // message may have been ingested through another topic's pipeline (group logs
+                // are associated with every space they concern), which satisfies this pipeline's
+                // orderer before that other pipeline's spaces processor has applied it. Give it
+                // time rather than failing the message for good.
+                //
+                // TODO: This should be solved upstream, by ordering spaces processing across
+                // pipelines instead of per topic.
+                let mut attempts = 0;
                 let ProcessOutput {
                     groups_y,
                     space_y,
                     mut events,
-                } = match self.manager.process(msg).await {
-                    Ok(result) => result,
-                    Err(err) => return Err((input, SpacesError::SpacesManager(err.to_string()))),
+                } = loop {
+                    match self.manager.process(msg).await {
+                        Ok(result) => break result,
+                        Err(err)
+                            if attempts < MISSING_DEPENDENCY_RETRIES
+                                && err.to_string().contains("missing dependency") =>
+                        {
+                            attempts += 1;
+                            drop(mutating);
+                            tokio::time::sleep(MISSING_DEPENDENCY_RETRY_DELAY).await;
+                            mutating = self.manager.mutation_guard().await;
+                        }
+                        Err(err) => {
+                            return Err((input, SpacesError::SpacesManager(err.to_string())));
+                        }
+                    }
                 };
+                let _mutating = mutating;
 
                 // Persist resulting new states into database in one atomic transaction.
                 let permit = match self.store.begin().await {
