@@ -52,6 +52,7 @@ use p2panda_spaces::{ActorId, MemberId, SpaceId};
 use p2panda_store::topics::TopicStore;
 use p2panda_store::{SqliteError, SqliteStore, tx};
 use p2panda_stream::hooks::ProcessorHook;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::sync::Notify;
 use tracing::{debug, error};
@@ -62,9 +63,21 @@ use crate::spaces::forge::member_log_id;
 use crate::spaces::types::{AuthCapabilities, InnerMember, SpacesManager, SpacesManagerError};
 use crate::streams::Event;
 
-#[derive(Debug)]
+/// A space member's identity and long-term key bundle.
+///
+/// Serialises transparently to the inner key bundle material so it can be shipped over a
+/// side-channel (QR code, an unencrypted topic, ...) and registered on another node via
+/// [`crate::Node::register_member`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct Member {
     pub(crate) inner: InnerMember,
+}
+
+impl From<InnerMember> for Member {
+    fn from(inner: InnerMember) -> Self {
+        Self { inner }
+    }
 }
 
 impl Member {

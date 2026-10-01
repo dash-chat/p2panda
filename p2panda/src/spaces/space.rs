@@ -23,18 +23,22 @@ use thiserror::Error;
 use tokio::sync::oneshot::error::RecvError;
 
 use crate::egress::{EgressError, EgressHandle, SubmitError, SubmitFuture};
-use crate::operation::Extensions;
+use crate::node::CreateSpaceError;
+use crate::operation::{Extensions, Header, Operation};
 use crate::spaces::member::associate_members;
 use crate::spaces::message::SpacesMessage;
 use crate::spaces::types::{
-    AuthCapabilities, InnerSpace, InnerSpaceError, SpacesEvent, SpacesManagerError,
+    AuthCapabilities, InnerSpace, InnerSpaceError, SpacesEvent, SpacesManager, SpacesManagerError,
 };
 use crate::spaces::{RepairError, RepairTask};
-use crate::streams::{CloseError, StreamEvent, StreamPublisher, StreamSubscription};
+use crate::streams::{
+    CloseError, ExternalStreamFuture, ImportError, StreamEvent, StreamPublisher, StreamSubscription,
+};
 
 /// Wraps topic stream and returns the pub/sub pair of a more specialised spaces stream.
 pub(crate) fn spaces_stream<M>(
     inner: InnerSpace,
+    manager: SpacesManager,
     store: SqliteStore,
     repair_task: RepairTask,
     egress_handle: EgressHandle,
@@ -47,6 +51,7 @@ where
     (
         Space {
             inner,
+            manager,
             store,
             repair_task,
             egress_handle,
@@ -62,6 +67,7 @@ where
     M: Serialize,
 {
     inner: InnerSpace,
+    manager: SpacesManager,
     store: SqliteStore,
     repair_task: RepairTask,
     egress_handle: EgressHandle,
@@ -74,6 +80,44 @@ where
 {
     pub fn id(&self) -> SpaceId {
         self.inner.id()
+    }
+
+    /// Create the space this handle points at, with the local node as its only (managing)
+    /// member.
+    ///
+    /// A handle obtained via [`crate::Node::space`] refers to a space which may not exist yet.
+    /// Calling this materialises it locally and publishes the "create" control message into the
+    /// space topic. Fails if the space already exists.
+    pub async fn create(&self) -> Result<(), CreateSpaceError> {
+        let space_id = self.id();
+
+        // We always create a space with only us as the initial members.
+        let output = self.manager.create_space(space_id, &[]).await?;
+
+        // Persist the computed groups- and spaces-state to the stores.
+        tx!(self.store, {
+            let spaces_store = SqliteSpacesStore::<Extensions>::new(self.store.clone());
+            spaces_store
+                .set_groups_state_tx(Hash::digest(GLOBAL_GROUPS_CONTEXT_ID), &output.groups_y)
+                .await?;
+            spaces_store
+                .set_space_state_tx(&space_id, &SpacesStoreState::from(output.space_y))
+                .await?;
+        });
+
+        dispatch_spaces_events(&self.egress_handle, space_id, output.messages).await?;
+
+        Ok(())
+    }
+
+    /// Import operations from an external stream into the space topic.
+    ///
+    /// See [`StreamPublisher::import`].
+    pub async fn import(
+        &self,
+        stream: impl Stream<Item = Operation> + Send + 'static,
+    ) -> Result<ExternalStreamFuture, ImportError> {
+        self.tx.import(stream).await
     }
 
     #[allow(clippy::result_large_err)]
@@ -99,17 +143,20 @@ where
         // We could also handle this outside of p2panda-spaces, simply by coming up with an argument
         // in the extensions for the spaces processor in p2panda-stream.
         let (_, message, _) = self.inner.publish(&body_bytes).await?;
+        let operation = message.into_operation();
+        let header = operation.header.clone();
 
         // We don't need to persist state or pass enriched events through the pipeline as the spaces
         // processor can re-process this event.
         let processed = self
             .egress_handle
-            .dispatch(message.into_operation(), self.id().into())
+            .dispatch(operation, self.id().into())
             .await?;
 
         Ok(SpaceFuture {
             processed,
             space_id: self.inner.id(),
+            header,
         })
     }
 
@@ -356,11 +403,22 @@ where
 pub struct SpaceFuture {
     pub space_id: SpaceId,
     pub processed: SubmitFuture,
+    header: Header,
 }
 
 impl SpaceFuture {
     pub fn id(&self) -> SpaceId {
         self.space_id
+    }
+
+    /// Hash of the published operation.
+    pub fn hash(&self) -> Hash {
+        self.header.hash()
+    }
+
+    /// Header of the published operation.
+    pub fn header(&self) -> &Header {
+        &self.header
     }
 }
 

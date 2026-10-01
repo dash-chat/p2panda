@@ -10,9 +10,8 @@ use p2panda_net::iroh_endpoint::{EndpointAddr, RelayUrl};
 use p2panda_net::sync::authoriser::SyncBlockList;
 use p2panda_net::{Endpoint, NetworkId, NodeId};
 use p2panda_spaces::manager::GLOBAL_GROUPS_CONTEXT_ID;
-use p2panda_spaces::{AuthGroupState, Config as SpacesConfig, GroupId, SpaceId, SpacesStoreState};
+use p2panda_spaces::{AuthGroupState, Config as SpacesConfig, GroupId, SpaceId};
 use p2panda_store::groups::GroupsStore;
-use p2panda_store::spaces::{SpacesStore, SqliteSpacesStore};
 use p2panda_store::sqlite::{SqliteError, SqliteStore, SqliteStoreBuilder};
 use p2panda_store::topics::TopicStore;
 use p2panda_store::tx;
@@ -27,15 +26,14 @@ use crate::credentials::Credentials;
 use crate::egress::Egress;
 use crate::forge::{Forge, OperationForge};
 use crate::network::{Network, NetworkConfig, NetworkError};
-use crate::operation::Extensions;
 use crate::spaces::types::{
     AuthCapabilities, InnerSpace, InnerSpaceError, NoBody, SpacesManager, SpacesManagerError,
 };
 use crate::spaces::{
     AccessLevel, ActorId, DEFAULT_REPAIR_STRATEGY, Group, GroupError, KeyBundleTask, Member,
     MemberAssociationHook, MemberError, RepairTask, Space, SpaceEgressError, SpaceSubscription,
-    SyncAuthoriserHook, actor_to_topic, dispatch_spaces_events, group_log_id, member_log_id,
-    spaces_manager, spaces_stream, to_initial_members,
+    SyncAuthoriserHook, actor_to_topic, group_log_id, member_log_id, spaces_manager, spaces_stream,
+    to_initial_members,
 };
 use crate::streams::{
     EphemeralStreamPublisher, EphemeralStreamSubscription, Event, ImportError, Pipeline,
@@ -644,6 +642,7 @@ impl Node {
 
         Ok(spaces_stream::<M>(
             inner,
+            self.spaces_manager.clone(),
             self.store.clone(),
             repair_task,
             egress_handle,
@@ -669,6 +668,15 @@ impl Node {
             .await
     }
 
+    /// Returns `true` if the local node has state for this space, that is, it either created the
+    /// space or has processed its "create" control message.
+    pub async fn has_space(
+        &self,
+        space_id: impl Into<SpaceId>,
+    ) -> Result<bool, SubscribeSpaceError> {
+        Ok(self.spaces_manager.space(space_id.into()).await?.is_some())
+    }
+
     pub async fn create_space<M>(
         &self,
         space_id: impl Into<SpaceId>,
@@ -676,65 +684,10 @@ impl Node {
     where
         M: Serialize + for<'a> Deserialize<'a> + Send + 'static,
     {
-        let space_id = space_id.into();
-
-        // Associate the space topic with our own member / key bundle log.
-        tx!(&self.store, {
-            self.store
-                .associate(&Topic::from(space_id), &self.id(), &member_log_id())
-                .await
-        })?;
-
-        // Establish a topic stream using the space id as a topic.
-        let (tx, rx) = self
-            .space_stream_from_inner(space_id, StreamFrom::Frontier, None)
+        let (space, rx) = self
+            .space_from::<M>(space_id, StreamFrom::Frontier, None)
             .await?;
-
-        // Create a space.
-        //
-        // We always create a space with only us as the initial members.
-        let output = self.spaces_manager.create_space(space_id, &[]).await?;
-
-        // Persist the computed groups- and spaces-state to the stores.
-        tx!(self.store, {
-            let spaces_store = SqliteSpacesStore::<Extensions>::new(self.store.clone());
-            spaces_store
-                .set_groups_state_tx(Hash::digest(GLOBAL_GROUPS_CONTEXT_ID), &output.groups_y)
-                .await?;
-            spaces_store
-                .set_space_state_tx(&space_id, &SpacesStoreState::from(output.space_y))
-                .await?;
-        });
-
-        let egress_handle = self.egress.handle();
-
-        dispatch_spaces_events(&egress_handle, space_id, output.messages).await?;
-
-        let inner = self
-            .spaces_manager
-            .space(space_id)
-            .await?
-            .expect("materialised space after processing operations");
-
-        // Spawn per-space repair background task.
-        // TODO: Can this be moved into spaces_stream?
-        let repair_task = RepairTask::spawn(
-            inner.id(),
-            self.spaces_manager.clone(),
-            self.store.clone(),
-            DEFAULT_REPAIR_STRATEGY,
-            egress_handle.clone(),
-        );
-
-        let (space, rx) = spaces_stream::<M>(
-            inner,
-            self.store.clone(),
-            repair_task,
-            egress_handle,
-            tx,
-            rx,
-        );
-
+        space.create().await?;
         Ok((space, rx))
     }
 
@@ -935,6 +888,9 @@ pub enum SubscribeSpaceError {
 pub enum CreateSpaceError {
     #[error(transparent)]
     Manager(#[from] SpacesManagerError),
+
+    #[error(transparent)]
+    Subscribe(#[from] SubscribeSpaceError),
 
     #[error(transparent)]
     CreateStream(#[from] CreateStreamError),
