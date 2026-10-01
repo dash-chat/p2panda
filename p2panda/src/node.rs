@@ -46,6 +46,7 @@ use crate::streams::{
 static_assertions::assert_impl_all!(Node: Send, Sync);
 
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 enum NodeNetwork {
     Online(Network),
     Offline { network_id: NetworkId },
