@@ -419,17 +419,37 @@ impl Drop for TransactionPermit {
     fn drop(&mut self) {
         // If the permit was never used (due to an early return / error / etc.) we automatically
         // roll-back the transaction.
-        if !self.committed {
-            let permit = self.permit.clone();
-            let tx = self.tx.clone();
+        if self.committed {
+            return;
+        }
 
-            tokio::spawn(async move {
-                if let Some(tx) = tx.lock().await.take() {
-                    let _ = tx.rollback().await;
-                }
+        // Take the transaction out of its slot right here: dropping an sqlx transaction rolls it
+        // back. This must not depend on a task running later. A permit can be dropped while its
+        // runtime is going away (a topic stream's pipeline runs on its own current-thread runtime
+        // whose `block_on` returns once the local tasks are done, before any task spawned with
+        // `tokio::spawn` from a drop would run); a rollback that never runs would leave the slot
+        // filled while the semaphore is released, and every later `begin` would then hit the
+        // assertion there.
+        //
+        // The mutex is only ever locked by whoever holds the permit, so this normally succeeds.
+        // Should it be locked (the dropped future was inside a `tx` call), fall back to rolling
+        // back on a task.
+        match self.tx.try_lock() {
+            Ok(mut tx_ref) => {
+                drop(tx_ref.take());
+            }
+            Err(_) => {
+                let permit = self.permit.clone();
+                let tx = self.tx.clone();
 
-                drop(permit); // Semaphore released only after rollback completes.
-            });
+                tokio::spawn(async move {
+                    if let Some(tx) = tx.lock().await.take() {
+                        let _ = tx.rollback().await;
+                    }
+
+                    drop(permit); // Semaphore released only after rollback completes.
+                });
+            }
         }
     }
 }
