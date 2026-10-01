@@ -20,6 +20,7 @@ use p2panda_store::spaces::{SpacesStore, SqliteSpacesStore};
 use p2panda_store::{SqliteError, SqliteStore, tx};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use tokio::sync::OwnedMutexGuard;
 use tokio::sync::oneshot::error::RecvError;
 
 use crate::egress::{EgressError, EgressHandle, SubmitError, SubmitFuture};
@@ -91,6 +92,8 @@ where
     pub async fn create(&self) -> Result<(), CreateSpaceError> {
         let space_id = self.id();
 
+        let mutating = self.manager.mutation_guard().await;
+
         // We always create a space with only us as the initial members.
         let output = self.manager.create_space(space_id, &[]).await?;
 
@@ -104,6 +107,9 @@ where
                 .set_space_state_tx(&space_id, &SpacesStoreState::from(output.space_y))
                 .await?;
         });
+
+        // Dispatching awaits the pipeline, which needs the guard itself.
+        drop(mutating);
 
         dispatch_spaces_events(&self.egress_handle, space_id, output.messages).await?;
 
@@ -179,6 +185,7 @@ where
         // ensure we have incorporated the latest groups changes into the space.
         self.repair().await?;
 
+        let mutating = self.manager.mutation_guard().await;
         let output = self
             .inner
             .add(
@@ -190,7 +197,7 @@ where
             )
             .await?;
 
-        self.process_change(output).await?;
+        self.process_change(output, mutating).await?;
 
         Ok(())
     }
@@ -212,8 +219,9 @@ where
         // ensure we have incorporated the latest groups changes into the space.
         self.repair().await?;
 
+        let mutating = self.manager.mutation_guard().await;
         let output = self.inner.remove(actor).await?;
-        self.process_change(output).await?;
+        self.process_change(output, mutating).await?;
 
         Ok(())
     }
@@ -241,6 +249,7 @@ where
         // ensure we have incorporated the latest groups changes into the space.
         self.repair().await?;
 
+        let mutating = self.manager.mutation_guard().await;
         let output = self
             .inner
             .promote(
@@ -252,7 +261,7 @@ where
             )
             .await?;
 
-        self.process_change(output).await?;
+        self.process_change(output, mutating).await?;
 
         Ok(())
     }
@@ -280,6 +289,7 @@ where
         // ensure we have incorporated the latest groups changes into the space.
         self.repair().await?;
 
+        let mutating = self.manager.mutation_guard().await;
         let output = self
             .inner
             .demote(
@@ -291,14 +301,17 @@ where
             )
             .await?;
 
-        self.process_change(output).await?;
+        self.process_change(output, mutating).await?;
 
         Ok(())
     }
 
+    /// Persist a computed change and dispatch its messages. `mutating` is the guard the change
+    /// was computed under; it is released once the state is persisted, before dispatching.
     async fn process_change(
         &self,
         space_output: SpaceOutput<AuthCapabilities, SpacesMessage>,
+        mutating: OwnedMutexGuard<()>,
     ) -> Result<(), ProcessError> {
         // Associate member logs with this space. This is equivalent to the member association hook
         // which is registered on the event processing pipeline. Since locally issued events are not
@@ -319,6 +332,9 @@ where
                 .set_space_state_tx(&self.id(), &SpacesStoreState::from(space_output.space_y))
                 .await?;
         });
+
+        // Dispatching awaits the pipeline, which needs the guard itself.
+        drop(mutating);
 
         dispatch_spaces_events(&self.egress_handle, self.id(), space_output.messages).await?;
 

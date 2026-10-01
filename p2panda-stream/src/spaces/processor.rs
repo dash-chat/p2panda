@@ -66,6 +66,10 @@ where
 
         let result = match input_args {
             SpacesProcessorArgs::Process { msg } => {
+                // Held until the resulting state is committed, so no other pipeline or local
+                // change persists a state computed from what we are about to overwrite.
+                let _mutating = self.manager.mutation_guard().await;
+
                 // Process incoming event.
                 let ProcessOutput {
                     groups_y,

@@ -17,7 +17,7 @@ use p2panda_store::key_registry::KeyRegistryStore;
 use p2panda_store::key_secrets::KeySecretsStore;
 use p2panda_store::spaces::{SpacesMessageStore, SpacesStore};
 use thiserror::Error;
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, OwnedMutexGuard, RwLock};
 use tracing::debug;
 
 use crate::auth::message::AuthMessage;
@@ -64,6 +64,9 @@ pub struct Manager<S, F, C> {
     pub(crate) actor_id: ActorId,
     #[allow(clippy::type_complexity)]
     pub(crate) inner: Arc<RwLock<ManagerInner<S, F, C>>>,
+    /// Serialises every read-modify-write of the (global) groups and spaces state, see
+    /// [`Manager::mutation_guard`].
+    mutation_lock: Arc<Mutex<()>>,
 }
 
 #[derive(Debug)]
@@ -117,7 +120,20 @@ where
         Ok(Self {
             actor_id,
             inner: Arc::new(RwLock::new(inner)),
+            mutation_lock: Arc::new(Mutex::new(())),
         })
+    }
+
+    /// Hold this guard across reading state, computing a change and persisting the result.
+    ///
+    /// The manager reads the groups and spaces state and persists results in separate, short
+    /// transactions. Two changes computed at the same time (a message being processed on one
+    /// topic's pipeline and a local membership change, or messages on two pipelines) would each
+    /// persist a state lacking the other's change. Processors and local changes take this guard
+    /// for the whole read-modify-write, and release it before awaiting anything that needs a
+    /// processor to make progress (dispatching into a topic, for example).
+    pub async fn mutation_guard(&self) -> OwnedMutexGuard<()> {
+        self.mutation_lock.clone().lock_owned().await
     }
 
     /// Get a space by id.
@@ -733,6 +749,7 @@ impl<S, F, C> Clone for Manager<S, F, C> {
         Self {
             actor_id: self.actor_id,
             inner: self.inner.clone(),
+            mutation_lock: self.mutation_lock.clone(),
         }
     }
 }
