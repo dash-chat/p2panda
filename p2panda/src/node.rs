@@ -26,6 +26,7 @@ use crate::credentials::Credentials;
 use crate::egress::Egress;
 use crate::forge::{Forge, OperationForge};
 use crate::network::{Network, NetworkConfig, NetworkError};
+use crate::spaces::RepairPolicy;
 use crate::spaces::types::{
     AuthCapabilities, InnerSpace, InnerSpaceError, NoBody, SpacesManager, SpacesManagerError,
 };
@@ -637,6 +638,7 @@ impl Node {
             self.spaces_manager.clone(),
             self.store.clone(),
             DEFAULT_REPAIR_STRATEGY,
+            self.config.repair_policy,
             egress_handle.clone(),
         );
 
@@ -835,6 +837,7 @@ pub(crate) struct Config {
     pub ack_policy: AckPolicy,
     pub network: NetworkConfig,
     pub offline: bool,
+    pub repair_policy: RepairPolicy,
 }
 
 /// Error occurred when spawning network or store processes.

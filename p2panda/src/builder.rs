@@ -13,6 +13,7 @@ use p2panda_store::sqlite::{SqlitePool, SqliteStoreBuilder};
 
 use crate::network::{MdnsDiscoveryMode, NetworkConfig};
 use crate::node::{AckPolicy, Config, SpawnError};
+use crate::spaces::RepairPolicy;
 use crate::{Credentials, Node};
 
 /// Builder for `Node`.
@@ -89,6 +90,14 @@ impl NodeBuilder {
     /// See the `Node::stream(topic)` documentation for further information.
     pub fn ack_policy(mut self, value: AckPolicy) -> Self {
         self.config.ack_policy = value;
+        self
+    }
+
+    /// Defines which members of a space run its repair task, see [`RepairPolicy`].
+    ///
+    /// If left unset, every member with read access repairs.
+    pub fn repair_policy(mut self, value: RepairPolicy) -> Self {
+        self.config.repair_policy = value;
         self
     }
 

@@ -57,6 +57,26 @@ pub enum RepairStrategy {
     Partial(Vec<GroupId>),
 }
 
+/// Which members of a space run the repair task for it.
+///
+/// Every repairing member publishes its own chain of membership pointers, and pointers from
+/// different members carry no dependency on each other. A space with several repairers can
+/// therefore receive a later auth message's pointer before an earlier one's and fail to apply it
+/// ("missing dependency"). Limiting repair to managers keeps a space's pointers in few chains;
+/// managers change membership (which repairs first), so they are enough to keep a space up to
+/// date, as long as every space has one.
+///
+/// TODO: Upstream should make pointer application order-independent, or let the orderer see
+/// the auth dependencies of a pointer; then this policy becomes unnecessary.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RepairPolicy {
+    /// Every member with at least read access repairs.
+    #[default]
+    AnyReader,
+    /// Only managers repair.
+    ManagersOnly,
+}
+
 /// Repairing a space is the process of merging missing auth operations from the shared groups
 /// state into a space. This keeps the space membership up-to-date with concurrent changes and
 /// ensures that all required auth operations are encrypted and sent to other nodes subscribed the
@@ -74,6 +94,7 @@ pub enum RepairStrategy {
 pub(crate) async fn repair_space(
     space_id: SpaceId,
     strategy: &RepairStrategy,
+    policy: RepairPolicy,
     manager: &SpacesManager,
     store: &SqliteStore,
     egress_handle: &EgressHandle,
@@ -104,22 +125,16 @@ pub(crate) async fn repair_space(
 
     store.commit(permit).await?;
 
-    // Only managers repair a space. Every repairing member publishes its own chain of membership
-    // pointers, and pointers from different members carry no dependency on each other, so with
-    // several repairers a space can receive a later auth message's pointer before an earlier
-    // one's and fail to apply it ("missing dependency"). Managers are the ones changing
-    // membership (which repairs first), so they are enough to keep a space up to date.
-    //
-    // TODO: Upstream should make pointer application order-independent, or let the orderer
-    // see the auth dependencies of a pointer.
-    let me = manager.id();
-    let i_manage = space_y
-        .groups_y
-        .members(space_y.group_id)
-        .iter()
-        .any(|(member, access)| *member == me && access.level.can_manage());
-    if !i_manage {
-        return Ok(false);
+    if policy == RepairPolicy::ManagersOnly {
+        let me = manager.id();
+        let i_manage = space_y
+            .groups_y
+            .members(space_y.group_id)
+            .iter()
+            .any(|(member, access)| *member == me && access.level.can_manage());
+        if !i_manage {
+            return Ok(false);
+        }
     }
 
     let group_ids = match strategy {
@@ -228,6 +243,7 @@ impl RepairTask {
         manager: SpacesManager,
         store: SqliteStore,
         strategy: RepairStrategy,
+        policy: RepairPolicy,
         egress_handle: EgressHandle,
     ) -> Self {
         debug!("repair management task started");
@@ -244,6 +260,7 @@ impl RepairTask {
                         let result = repair_space(
                             space_id,
                             &strategy,
+                            policy,
                             &manager,
                             &store,
                             &egress_handle,
@@ -267,6 +284,7 @@ impl RepairTask {
                                 let result = repair_space(
                                     space_id,
                                     &strategy,
+                                    policy,
                                     &manager,
                                     &store,
                                     &egress_handle,

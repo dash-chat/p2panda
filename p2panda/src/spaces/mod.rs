@@ -26,6 +26,7 @@ pub use group::{
 };
 pub use member::{GroupActor, Member, MemberError};
 pub(crate) use member::{KeyBundleTask, MemberAssociationHook};
+pub use repair::RepairPolicy;
 pub(crate) use repair::{DEFAULT_REPAIR_STRATEGY, RepairError, RepairTask};
 pub use space::{
     AddSpaceMemberError, PublishSpaceError, RemoveSpaceMemberError, Space, SpaceEgressError,
