@@ -91,6 +91,31 @@ mod api {
     }
 
     #[tokio::test]
+    async fn publish_with_reports_hash_before_sending() {
+        setup_logging();
+
+        let topic = Topic::random();
+        let panda = p2panda::builder().offline().spawn().await.unwrap();
+        let (panda_tx, mut panda_rx) = panda.stream::<String>(topic).await.unwrap();
+
+        let mut reported_hash = None;
+        let publish_fut = panda_tx
+            .publish_with("Hello, myself!".into(), |hash| reported_hash = Some(hash))
+            .await
+            .unwrap();
+
+        let reported_hash = reported_hash.expect("before_send should be called");
+        assert_eq!(reported_hash, publish_fut.hash());
+
+        while let Some(event) = panda_rx.next().await {
+            if let StreamEvent::Processed { operation, .. } = event {
+                assert_eq!(operation.id(), reported_hash);
+                break;
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn offline_node_rejects_network_config() {
         let relay_url: RelayUrl = "https://my.relay.link".parse().unwrap();
 
