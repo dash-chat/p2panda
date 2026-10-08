@@ -143,13 +143,28 @@ where
     /// operations. It is possible to await the processing result which can be useful for some
     /// applications if they want to block UI components etc.
     pub async fn publish(&self, message: M) -> Result<PublishFuture, PublishError> {
-        self.publish_inner(Some(message), false).await
+        self.publish_inner(Some(message), false, |_| {}).await
+    }
+
+    /// Publish a message into a topic stream, calling `before_send` with the operation's hash
+    /// before the operation enters the processing pipeline.
+    ///
+    /// The operation can reach a subscription stream before [`publish`](Self::publish) returns
+    /// its [`PublishFuture`], so this is the only point at which an application can register
+    /// interest in the operation's hash and be sure to see it before it is processed.
+    pub async fn publish_with(
+        &self,
+        message: M,
+        before_send: impl FnOnce(Hash),
+    ) -> Result<PublishFuture, PublishError> {
+        self.publish_inner(Some(message), false, before_send).await
     }
 
     async fn publish_inner(
         &self,
         message: Option<M>,
         prune_flag: bool,
+        before_send: impl FnOnce(Hash),
     ) -> Result<PublishFuture, PublishError> {
         // Create, sign and persist operation with given payload.
         let extensions = Extensions::builder(LogId::from_topic(self.topic()))
@@ -171,6 +186,7 @@ where
             )
             .await?;
         let hash = operation.hash;
+        before_send(hash);
 
         // Start processing operation in pipeline. Keep a oneshot receiver around to allow users to
         // optionally await & get informed when processing has finished.
@@ -195,7 +211,7 @@ where
     /// gets pruned. The prefix is the set of operations in the log's sequence which are causally
     /// "older" / before the point where the prune flag was set.
     pub async fn prune(&self, message: Option<M>) -> Result<PublishFuture, PublishError> {
-        self.publish_inner(message, true).await
+        self.publish_inner(message, true, |_| {}).await
     }
 
     /// Import an external source of operations.
