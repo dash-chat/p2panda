@@ -268,6 +268,10 @@ where
         self.inner.id()
     }
 
+    pub fn publisher(&self) -> &StreamPublisher<M> {
+        &self.tx
+    }
+
     /// Publishes a message into the space.
     ///
     ///  Every message published into a space can be decrypted by it's members.
