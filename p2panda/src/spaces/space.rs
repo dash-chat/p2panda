@@ -102,6 +102,10 @@ where
         self.inner.id()
     }
 
+    pub fn publisher(&self) -> &StreamPublisher<M> {
+        &self.tx
+    }
+
     #[allow(clippy::result_large_err)]
     pub async fn publish(&self, message: M) -> Result<SpaceFuture, PublishSpaceError> {
         let members = self.actors().await?;
