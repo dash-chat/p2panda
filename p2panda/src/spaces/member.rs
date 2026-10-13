@@ -63,7 +63,7 @@ use crate::spaces::forge::member_log_id;
 use crate::spaces::types::{AuthCapabilities, InnerMember, SpacesManager, SpacesManagerError};
 use crate::streams::{Event, ImportLocalTx, LocalStreamFuture};
 
-#[derive(Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Member {
     pub(crate) inner: InnerMember,
 }
