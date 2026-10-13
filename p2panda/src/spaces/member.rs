@@ -64,7 +64,7 @@ use crate::spaces::types::{
 };
 use crate::streams::Event;
 
-#[derive(Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Member {
     pub(crate) inner: InnerMember,
 }
