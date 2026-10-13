@@ -61,7 +61,7 @@ use crate::spaces::types::{InnerMember, InnerPendingMember, SpacesManager, Space
 /// access) and / or decrypt incoming ones (when they have "read" access).
 ///
 /// Every member is identified by it's verification key (Ed25519).
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Member {
     pub(crate) inner: InnerMember,
 }
