@@ -333,9 +333,13 @@ where
             }
         };
 
-        sink.close()
+        // Closing fails when the remote is already gone, which must still end the session with
+        // its final event.
+        let close_result = sink
+            .close()
             .await
-            .map_err(|err| TopicLogSyncChannelError::MessageSink(format!("{err:?}")))?;
+            .map_err(|err| TopicLogSyncChannelError::MessageSink(format!("{err:?}")).into());
+        let result = result.and(close_result);
 
         let final_event = match result.as_ref() {
             Ok(_) => {
@@ -1203,6 +1207,83 @@ pub mod tests {
                     "remote unexpectedly closed stream in live-mode".to_string()
                 );
                 break;
+            }
+        }
+    }
+
+    struct FailsOnClose<S>(S);
+
+    impl<S, M> futures_util::Sink<M> for FailsOnClose<S>
+    where
+        S: futures_util::Sink<M> + Unpin,
+    {
+        type Error = &'static str;
+
+        fn poll_ready(
+            mut self: std::pin::Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Result<(), Self::Error>> {
+            std::pin::Pin::new(&mut self.0)
+                .poll_ready(cx)
+                .map_err(|_| "send failed")
+        }
+
+        fn start_send(mut self: std::pin::Pin<&mut Self>, item: M) -> Result<(), Self::Error> {
+            std::pin::Pin::new(&mut self.0)
+                .start_send(item)
+                .map_err(|_| "send failed")
+        }
+
+        fn poll_flush(
+            mut self: std::pin::Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Result<(), Self::Error>> {
+            std::pin::Pin::new(&mut self.0)
+                .poll_flush(cx)
+                .map_err(|_| "send failed")
+        }
+
+        fn poll_close(
+            self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Result<(), Self::Error>> {
+            std::task::Poll::Ready(Err("connection lost"))
+        }
+    }
+
+    #[tokio::test]
+    async fn failed_close_after_live_mode_still_ends_the_session() {
+        let topic = Topic::random();
+        let mut peer = Peer::new(0).await;
+        peer.associate(&topic, &Default::default()).await;
+
+        let (session, mut events_rx, _live_tx) = peer.topic_sync_protocol(topic.clone(), true);
+
+        let (local_message_tx, _remote_message_rx) = mpsc::channel(128);
+        let mut local_message_tx = FailsOnClose(local_message_tx);
+        let (mut remote_message_tx, local_message_rx) = mpsc::channel(128);
+        let mut local_message_rx = local_message_rx.map(|message| Ok::<_, ()>(message));
+
+        for message in [
+            TestTopicSyncMessage::Sync(LogSyncMessage::Have(BTreeMap::default())),
+            TestTopicSyncMessage::Sync(LogSyncMessage::Done),
+            TestTopicSyncMessage::Close,
+        ] {
+            remote_message_tx.send(message).await.unwrap();
+        }
+
+        session
+            .run(&mut local_message_tx, &mut local_message_rx)
+            .await
+            .expect_err("expected the failed close to end the session with an error");
+
+        loop {
+            match events_rx.recv().await.unwrap() {
+                TopicLogSyncEvent::Failed { .. } => break,
+                TopicLogSyncEvent::SessionFinished { .. } => {
+                    panic!("a session whose close failed must not finish cleanly")
+                }
+                _ => continue,
             }
         }
     }
