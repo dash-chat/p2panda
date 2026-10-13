@@ -112,7 +112,7 @@ impl Aggregator {
                 self.handle_session_end(session_id);
                 self.total_bytes_sent += metrics.sent_bytes();
                 self.total_bytes_received += metrics.received_bytes();
-                None
+                Some(SyncEvent::SessionEnded { remote, session_id })
             }
             TopicLogSyncEvent::Failed { error } => {
                 let metrics = self.handle_session_end(session_id);
@@ -195,6 +195,10 @@ pub(crate) enum SyncEvent<E> {
         received_bytes_topic_total: u32,
         error: Option<SyncError>,
     },
+    SessionEnded {
+        remote: NodeId,
+        session_id: u64,
+    },
     OperationReceived {
         operation: Box<Operation<E>>,
         source: Source,
@@ -241,6 +245,10 @@ impl<E, M> From<SyncEvent<E>> for StreamEvent<M> {
                 sent_bytes_topic_total,
                 received_bytes_topic_total,
                 error,
+            },
+            SyncEvent::SessionEnded { remote, session_id } => StreamEvent::SessionEnded {
+                remote_node_id: remote,
+                session_id,
             },
             // We can't convert operation events simply like this as they need to be processed and
             // decoded first so this branch is never called.
@@ -291,6 +299,25 @@ mod tests {
             },
         ));
         assert_eq!(aggregator.running_sessions(), 1);
+    }
+
+    #[test]
+    fn finished_session() {
+        let mut aggregator = Aggregator::new();
+
+        aggregator.process(from_sync(1, TopicLogSyncEvent::SessionStarted));
+
+        let result = aggregator.process(from_sync(
+            1,
+            TopicLogSyncEvent::SessionFinished {
+                metrics: Metrics::default(),
+            },
+        ));
+
+        match result {
+            Some(SyncEvent::SessionEnded { session_id, .. }) => assert_eq!(session_id, 1),
+            _ => panic!(),
+        }
     }
 
     #[test]

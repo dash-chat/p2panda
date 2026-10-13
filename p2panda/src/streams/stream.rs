@@ -321,6 +321,7 @@ where
                         match event {
                             sync_metrics::SyncEvent::SyncStarted { .. } => vec![event.into()],
                             sync_metrics::SyncEvent::SyncEnded { .. } => vec![event.into()],
+                            sync_metrics::SyncEvent::SessionEnded { .. } => vec![event.into()],
                             sync_metrics::SyncEvent::OperationReceived { operation, source } => {
                                 process_operation_in(*operation, source, topic, &pipeline, &sync_handle).await;
                                 continue;
@@ -710,6 +711,18 @@ pub enum StreamEvent<M> {
 
         /// If the sync session ended with an error the reason is included here.
         error: Option<SyncError>,
+    },
+
+    /// Sync session with a remote node closed without an error.
+    ///
+    /// A session in live mode stays open after `SyncEnded` until either side closes it, so this
+    /// is the event that tells the remote node is no longer reachable over this topic.
+    SessionEnded {
+        /// Id of the remote node.
+        remote_node_id: NodeId,
+
+        /// Id of the sync session.
+        session_id: u64,
     },
 
     /// Import of operations from an external stream has started.
