@@ -1152,3 +1152,10 @@ pub enum Source {
     /// Operation was forged locally and handled in egress.
     Egress,
 }
+
+impl Source {
+    /// Is the source of local origin?
+    pub fn is_local(&self) -> bool {
+        matches!(self, Self::Publish | Self::Replay | Self::Egress)
+    }
+}
