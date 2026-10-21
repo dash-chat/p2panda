@@ -20,10 +20,12 @@ use p2panda_store::SqliteStore;
 // Re-export useful types.
 pub use p2panda_auth::AccessLevel;
 pub use p2panda_spaces::manager::ManagerError;
-pub use p2panda_spaces::{ActorId, GroupContext, GroupId, MemberId, SpaceContext, SpaceId};
+pub use p2panda_spaces::{
+    ActorId, GroupContext, GroupId, MemberId, SpaceContext, SpaceId, space_group_id,
+};
 
 pub(crate) use authoriser::SyncAuthoriserHook;
-pub(crate) use forge::member_log_id;
+pub use forge::{application_log_id, group_log_id, member_log_id, space_log_id};
 pub use group::{
     AddGroupMemberError, Group, GroupSubscription, PendingGroup, RemoveGroupMemberError,
 };
