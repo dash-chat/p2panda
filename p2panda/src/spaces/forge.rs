@@ -12,13 +12,13 @@ use crate::operation::{Extensions, LogId};
 use crate::spaces::message::SpacesMessage;
 use crate::spaces::types::AuthCapabilities;
 
-pub(crate) const MEMBER_CONTROL_MESSAGE: &[u8] = b"member_control/v1";
+const MEMBER_CONTROL_MESSAGE: &[u8] = b"member_control/v1";
 
-const GROUP_CONTROL_MESSAGE: &[u8; 16] = b"group_control/v1";
+const GROUP_CONTROL_MESSAGE: &[u8] = b"group_control/v1";
 
-const SPACE_CONTROL_MESSAGE: &[u8; 16] = b"space_control/v1";
+const SPACE_CONTROL_MESSAGE: &[u8] = b"space_control/v1";
 
-const SPACE_APPLICATION_MESSAGE: &[u8; 20] = b"space_application/v1";
+const SPACE_APPLICATION_MESSAGE: &[u8] = b"space_application/v1";
 
 // Internal helper to build a LogId::digest() from two slices:
 //
@@ -131,7 +131,7 @@ impl p2panda_spaces::Forge<AuthCapabilities> for OperationForge {
                 // this is _one single log_ across all spaces.
                 //
                 // New member messages are created automatically by a background task.
-                let log_id = member_log_id();
+                let log_id = member_log_id(crate::forge::Forge::verifying_key(self));
 
                 // TODO: The key bundle itself should not be in the header to allow deleting it
                 // after a while (without breaking the whole key bundle log.
@@ -184,10 +184,7 @@ impl p2panda_spaces::Forge<AuthCapabilities> for OperationForge {
                 let _body = ciphertext.clone();
 
                 // Every author maintains their own log of application messages _per_ space.
-                let log_id = logid_digest_from_slices! (
-                    space_id.as_bytes() => p2panda_core::hash::HASH_LEN,
-                    SPACE_APPLICATION_MESSAGE
-                );
+                let log_id = application_log_id(space_id);
 
                 let extensions = Extensions::builder(log_id).build_space(args);
 
@@ -203,18 +200,32 @@ impl p2panda_spaces::Forge<AuthCapabilities> for OperationForge {
     }
 }
 
-pub(crate) fn member_log_id() -> LogId {
-    LogId::digest(MEMBER_CONTROL_MESSAGE)
+/// Log holding a member's key bundles: one per author, shared by every space they are in.
+pub fn member_log_id(member: VerifyingKey) -> LogId {
+    logid_digest_from_slices!(
+        member.as_bytes() => p2panda_core::identity::VERIFYING_KEY_LEN,
+        MEMBER_CONTROL_MESSAGE
+    )
 }
 
-fn space_log_id(space_id: SpaceId) -> LogId {
+/// Log holding an author's space control messages for one space.
+pub fn space_log_id(space_id: SpaceId) -> LogId {
     logid_digest_from_slices!(
         space_id.as_bytes() => p2panda_core::hash::HASH_LEN,
         SPACE_CONTROL_MESSAGE
     )
 }
 
-pub(crate) fn group_log_id(group_id: VerifyingKey) -> LogId {
+/// Log holding an author's application messages for one space.
+pub fn application_log_id(space_id: SpaceId) -> LogId {
+    logid_digest_from_slices!(
+        space_id.as_bytes() => p2panda_core::hash::HASH_LEN,
+        SPACE_APPLICATION_MESSAGE
+    )
+}
+
+/// Log holding an author's group control messages for one group.
+pub fn group_log_id(group_id: VerifyingKey) -> LogId {
     // The group id would be enough to indicate the log id, we hash it here together with a
     // constant value to prevent possible collisions with logs of same id but different purpose.
     logid_digest_from_slices!(
