@@ -196,12 +196,14 @@ async fn associate_members_inner(
     space_id: &SpaceId,
     members: &[(MemberId, Access)],
 ) -> Result<Vec<MemberId>, SqliteError> {
-    let log_id = member_log_id();
     let mut new_members = Vec::new();
 
     tx!(store, {
         for (id, _) in members {
-            if store.associate_tx(space_id, id, &log_id).await? {
+            if store
+                .associate_tx(space_id, id, &member_log_id(*id))
+                .await?
+            {
                 new_members.push(*id);
             }
         }
@@ -217,8 +219,6 @@ async fn dispatch_member_logs(
     topic: Topic,
     members: Vec<VerifyingKey>,
 ) -> Result<(), ReplayMemberLogsError> {
-    let log_id = member_log_id();
-
     let config = DispatchConfig {
         delivery: EventDeliveryPolicy::Topic(topic),
         processing: EventProcessingPolicy::Disabled,
@@ -231,7 +231,7 @@ async fn dispatch_member_logs(
         //
         // TODO: Later we want to prune the log when key bundles expired, so we don't send a whole
         // log with outdated material inside.
-        let mut entries = store.log_entries(&member, &log_id, None, None)?;
+        let mut entries = store.log_entries(&member, &member_log_id(member), None, None)?;
 
         while let Some(result) = entries.next().await {
             let operation = result?
