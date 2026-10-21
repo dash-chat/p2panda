@@ -353,7 +353,9 @@ async fn associate_members_inner(
 ) -> Result<(), SqliteError> {
     tx!(store, {
         for (id, _) in members {
-            store.associate_tx(space_id, id, &member_log_id()).await?;
+            store
+                .associate_tx(space_id, id, &member_log_id(*id))
+                .await?;
         }
     });
 
@@ -407,7 +409,7 @@ mod tests {
 
     async fn get_op_count(store: &SqliteStore, verifying_key: VerifyingKey) -> u32 {
         let result = store
-            .get_log_size(&verifying_key, &member_log_id(), None, None)
+            .get_log_size(&verifying_key, &member_log_id(verifying_key), None, None)
             .await
             .unwrap();
         result.map(|(op_count, _)| op_count).unwrap_or_default()

@@ -37,6 +37,7 @@ pub use event::{Event, GroupActor, GroupContext, GroupEvent, SpaceContext, Space
 pub use forge::Forge;
 pub use message::{AuthMessage, SpacesArgs, SpacesMessage};
 pub use pending::{PendingGroup, PendingMember, PendingSpace};
+pub use space::space_group_id;
 pub use store::SpacesStoreState;
 pub use types::{AuthGroupState, StrongRemoveResolver};
 

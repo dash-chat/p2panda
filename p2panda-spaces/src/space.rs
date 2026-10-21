@@ -9,7 +9,7 @@ use p2panda_auth::group::GroupMember;
 use p2panda_auth::traits::{Conditions, Operation};
 use p2panda_auth::validation::{VerifyClaimedWriteError, verify_claimed_write_access};
 use p2panda_core::traits::{Digest, ShortFormat};
-use p2panda_core::{SigningKey, VerifyingKey};
+use p2panda_core::{Hash, SigningKey, VerifyingKey};
 use p2panda_encryption::key_manager::KeyManagerState;
 use p2panda_encryption::key_registry::KeyRegistryState;
 use p2panda_encryption::traits::GroupMessage;
@@ -133,11 +133,7 @@ where
             initial_members.push((my_id, Access::manage()));
         }
 
-        // Generate random group id.
-        let group_id: VerifyingKey = {
-            let signing_key = SigningKey::from_bytes(&ctx.rng.random_array()?);
-            signing_key.verifying_key()
-        };
+        let group_id = space_group_id(space_id);
 
         // Compute the groups to include in the space history based on initial group members.
         let include = typed_members(&global_groups_y, &initial_members)
@@ -1015,4 +1011,16 @@ where
 
     #[error(transparent)]
     UnauthorizedWrite(#[from] VerifyClaimedWriteError),
+}
+
+const SPACE_GROUP: &[u8] = b"space_group/v1";
+
+/// The id of the auth group backing a space, derived from the space id so that peers can name
+/// the group's logs before processing the space's history. The key behind it is never used to
+/// sign anything: it is an identifier only.
+pub fn space_group_id(space_id: SpaceId) -> GroupId {
+    let mut bytes = Vec::with_capacity(space_id.as_bytes().len() + SPACE_GROUP.len());
+    bytes.extend_from_slice(space_id.as_bytes());
+    bytes.extend_from_slice(SPACE_GROUP);
+    SigningKey::from_bytes(Hash::digest(&bytes).as_bytes()).verifying_key()
 }
