@@ -9,6 +9,7 @@ use p2panda_auth::validation::{
     can_add_member, can_demote_member, can_promote_member, can_remove_member, can_write,
 };
 use p2panda_auth::{Access, AccessLevel};
+use p2panda_core::Hash;
 use p2panda_core::cbor::{EncodeError, encode_cbor};
 use p2panda_core::traits::ShortFormat;
 use p2panda_spaces::space::SpaceOutput;
@@ -187,11 +188,16 @@ where
         })
     }
 
+    /// Add an actor to the space.
+    ///
+    /// Returns the hashes of the control operations this change published, in dispatch order.
+    /// The last one is the space membership operation itself; any before it are group
+    /// operations pushed into the space along with it.
     pub async fn add(
         &self,
         actor: impl Into<ActorId>,
         access: AccessLevel,
-    ) -> Result<(), AddSpaceMemberError> {
+    ) -> Result<Vec<Hash>, AddSpaceMemberError> {
         let me = self.inner.me();
         let space_id = self.id();
         let actor = actor.into();
@@ -216,12 +222,16 @@ where
             )
             .await?;
 
-        self.process_change(output).await?;
-
-        Ok(())
+        Ok(self.process_change(output).await?)
     }
 
-    pub async fn remove(&self, actor: impl Into<ActorId>) -> Result<(), RemoveSpaceMemberError> {
+    /// Remove an actor from the space.
+    ///
+    /// Returns the hashes of the published control operations, see [`Space::add`].
+    pub async fn remove(
+        &self,
+        actor: impl Into<ActorId>,
+    ) -> Result<Vec<Hash>, RemoveSpaceMemberError> {
         let me = self.inner.me();
         let actor = actor.into();
         let members = self.actors().await?;
@@ -237,17 +247,17 @@ where
         self.repair(None).await?;
 
         let output = self.inner.remove(actor).await?;
-        self.process_change(output).await?;
-
-        Ok(())
+        Ok(self.process_change(output).await?)
     }
 
     /// Promote an existing space member to the assigned access level.
+    ///
+    /// Returns the hashes of the published control operations, see [`Space::add`].
     pub async fn promote(
         &self,
         actor: impl Into<ActorId>,
         access: AccessLevel,
-    ) -> Result<(), PromoteSpaceMemberError> {
+    ) -> Result<Vec<Hash>, PromoteSpaceMemberError> {
         let me = self.inner.me();
         let actor = actor.into();
         let members = self.actors().await?;
@@ -274,17 +284,17 @@ where
             )
             .await?;
 
-        self.process_change(output).await?;
-
-        Ok(())
+        Ok(self.process_change(output).await?)
     }
 
     /// Demote an existing space member to the assigned access level.
+    ///
+    /// Returns the hashes of the published control operations, see [`Space::add`].
     pub async fn demote(
         &self,
         actor: impl Into<ActorId>,
         access: AccessLevel,
-    ) -> Result<(), DemoteSpaceMemberError> {
+    ) -> Result<Vec<Hash>, DemoteSpaceMemberError> {
         let me = self.inner.me();
         let actor = actor.into();
         let members = self.actors().await?;
@@ -311,9 +321,7 @@ where
             )
             .await?;
 
-        self.process_change(output).await?;
-
-        Ok(())
+        Ok(self.process_change(output).await?)
     }
 
     async fn repair(&self, new_member: Option<ActorId>) -> Result<(), RepairError> {
@@ -336,15 +344,16 @@ where
     async fn process_change(
         &self,
         space_output: SpaceOutput<AuthCapabilities, SpacesMessage>,
-    ) -> Result<(), ProcessError> {
+    ) -> Result<Vec<Hash>, ProcessError> {
         // Associate member logs with this space. This is equivalent to the member association hook
         // which is registered on the event processing pipeline. Since locally issued events are not
         // going through the pipeline, we have to repeat it here as well.
         associate_members(self.inner.me(), &self.store, space_output.events()).await;
 
-        dispatch_spaces_events(&self.egress_handle, self.id(), space_output.messages).await?;
+        let hashes =
+            dispatch_spaces_events(&self.egress_handle, self.id(), space_output.messages).await?;
 
-        Ok(())
+        Ok(hashes)
     }
 
     /// Returns all space members and their access level.
@@ -381,28 +390,30 @@ where
     }
 }
 
+/// Dispatch the control operations of a space change, returning their hashes in dispatch order.
 pub(crate) async fn dispatch_spaces_events(
     egress_handle: &EgressHandle,
     space_id: SpaceId,
     events: Vec<(SpacesMessage, Vec<SpacesEvent>)>,
-) -> Result<(), SpaceEgressError> {
+) -> Result<Vec<Hash>, SpaceEgressError> {
     let topic = space_id.into();
+    let mut hashes = Vec::with_capacity(events.len());
 
     for (message, events) in events {
+        let operation = message.into_operation();
+        hashes.push(operation.hash);
         let processed = if events.is_empty() {
-            egress_handle
-                .dispatch(message.into_operation(), topic)
-                .await?
+            egress_handle.dispatch(operation, topic).await?
         } else {
             egress_handle
-                .dispatch_with_spaces_events(message.into_operation(), topic, Some(events))
+                .dispatch_with_spaces_events(operation, topic, Some(events))
                 .await?
         };
 
         processed.await?;
     }
 
-    Ok(())
+    Ok(hashes)
 }
 
 #[cfg(any(test, feature = "test_utils"))]
