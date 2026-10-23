@@ -152,8 +152,8 @@ where
 
 /// Validate if a member can be removed from a group.
 ///
-/// The actor performing the action must be a member with manager rights and the to-be-removed
-/// member must be an existing member.
+/// The actor performing the action must be a member with manager rights, unless they are removing
+/// themselves, and the to-be-removed member must be an existing member.
 pub fn can_remove_member<ID>(
     actor: ID,
     removed: ID,
@@ -166,7 +166,7 @@ where
         return Err(RemoveMemberError::UnrecognisedActor);
     };
 
-    if !is_manager(actor, members) {
+    if actor != removed && !is_manager(actor, members) {
         return Err(RemoveMemberError::InsufficientAccess);
     }
 
@@ -402,6 +402,8 @@ mod tests {
         // Can remove member errors
         assert!(can_remove_member(1, 2, &members()).is_ok());
         assert!(can_remove_member(1, 1, &members()).is_ok());
+        assert!(can_remove_member(2, 2, &members()).is_ok());
+        assert!(can_remove_member(3, 3, &members()).is_ok());
         let err = can_remove_member(99, 2, &members()).unwrap_err();
         assert!(matches!(err, RemoveMemberError::UnrecognisedActor));
         let err = can_remove_member(2, 3, &members()).unwrap_err();
