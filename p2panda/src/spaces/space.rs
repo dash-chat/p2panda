@@ -100,6 +100,15 @@ where
         self.inner.id()
     }
 
+    /// Topic stream publishing handle (tx).
+    ///
+    /// Available before we've joined, so that operations can be imported into the space's topic
+    /// (for example from a relay) while we're still waiting for the control messages that admit
+    /// us. Publishing our own messages through it fails until then.
+    pub fn publisher(&self) -> &StreamPublisher<M> {
+        &self.tx
+    }
+
     /// Wait until we've joined the space with read access or higher.
     pub async fn joined(self) -> Result<Space<M>, SpacesManagerError> {
         let inner = self.inner.joined().await?;
