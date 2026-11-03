@@ -211,6 +211,7 @@ impl ThreadLocalActor for GossipSession {
                         session_id,
                     });
                 }
+                _ => trace!("gossip session actor: ignoring unknown gossip event"),
             },
             ToGossipSession::JoinNodes(nodes) => {
                 debug!(
