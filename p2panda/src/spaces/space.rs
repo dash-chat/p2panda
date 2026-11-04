@@ -164,6 +164,21 @@ where
 
     #[allow(clippy::result_large_err)]
     pub async fn publish(&self, message: M) -> Result<SpaceFuture, PublishSpaceError> {
+        self.publish_with(message, |_| {}).await
+    }
+
+    /// Publish an encrypted message into the space, calling `before_send` with the operation's
+    /// hash before the operation enters the processing pipeline.
+    ///
+    /// The operation can reach a subscription stream before [`publish`](Self::publish) returns
+    /// its [`SpaceFuture`], so this is the only point at which an application can register
+    /// interest in the operation's hash and be sure to see it before it is processed.
+    #[allow(clippy::result_large_err)]
+    pub async fn publish_with(
+        &self,
+        message: M,
+        before_send: impl FnOnce(Hash),
+    ) -> Result<SpaceFuture, PublishSpaceError> {
         let members = self.actors().await.map_err(Box::new)?;
 
         can_write(self.inner.me(), &members).map_err(|err| PublishSpaceError::Validation {
@@ -183,17 +198,21 @@ where
         // We could also handle this outside of p2panda-spaces, simply by coming up with an argument
         // in the extensions for the spaces processor in p2panda-stream.
         let (message, _) = self.inner.publish(&body_bytes).await.map_err(Box::new)?;
+        let operation = message.into_operation();
+        let hash = operation.hash;
+        before_send(hash);
 
         // We don't need to persist state or pass enriched events through the pipeline as the spaces
         // processor can re-process this event.
         let processed = self
             .egress_handle
-            .dispatch(message.into_operation(), self.id().into())
+            .dispatch(operation, self.id().into())
             .await?;
 
         Ok(SpaceFuture {
             processed,
             space_id: self.inner.id(),
+            hash,
         })
     }
 
@@ -454,11 +473,17 @@ where
 pub struct SpaceFuture {
     pub space_id: SpaceId,
     pub processed: SubmitFuture,
+    hash: Hash,
 }
 
 impl SpaceFuture {
     pub fn id(&self) -> SpaceId {
         self.space_id
+    }
+
+    /// Returns hash of the published operation.
+    pub fn hash(&self) -> Hash {
+        self.hash
     }
 }
 
