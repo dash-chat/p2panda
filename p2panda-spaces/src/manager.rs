@@ -166,6 +166,10 @@ where
         &self.inner.waiters
     }
 
+    pub(crate) fn rng(&self) -> &Rng {
+        &self.inner.rng
+    }
+
     /// Create a new group containing initial members with associated access levels.
     ///
     /// It is possible to create a group where the creator is not an initial member or is a member

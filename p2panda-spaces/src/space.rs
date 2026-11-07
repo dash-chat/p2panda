@@ -32,6 +32,7 @@ use crate::manager::{Manager, StoreError};
 use crate::message::{
     ApplicationMessage, AuthMessage, SpaceMembershipMessage, SpacesArgs, SpacesMessage,
 };
+use crate::secrets::SpaceSecrets;
 use crate::store::{
     Context, SpaceState, SpacesStoreState, StateChanges, StateError, StateTransaction,
 };
@@ -806,6 +807,19 @@ where
             .collect();
         sort_members(&mut members);
         Ok(members)
+    }
+
+    /// Run `f` with access to this space's current encryption secrets, for encrypting and
+    /// decrypting auxiliary application data towards the space.
+    ///
+    /// See [`SpaceSecrets`] for the operations available inside the closure.
+    pub async fn with_secrets<T>(
+        &self,
+        f: impl FnOnce(&SpaceSecrets<'_>) -> T,
+    ) -> Result<T, SpaceError<F, C>> {
+        let y = self.state().await?;
+        let secrets = SpaceSecrets::new(&y.encryption_y, self.manager.rng());
+        Ok(f(&secrets))
     }
 
     /// Publish a message encrypted towards all current group members.

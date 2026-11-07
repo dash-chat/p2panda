@@ -17,6 +17,7 @@ pub mod manager;
 pub mod member;
 mod message;
 mod pending;
+pub mod secrets;
 pub mod space;
 mod store;
 #[cfg(any(test, feature = "test_utils"))]
@@ -38,6 +39,7 @@ pub use forge::Forge;
 pub use identity::MemberStatus;
 pub use message::{AuthMessage, SpacesArgs, SpacesMessage};
 pub use pending::{PendingGroup, PendingMember, PendingSpace};
+pub use secrets::{SecretsError, SpaceSecrets};
 pub use space::space_group_id;
 pub use store::SpacesStoreState;
 pub use types::{AuthGroupState, StrongRemoveResolver};
