@@ -505,6 +505,18 @@ where
         Ok(group_id)
     }
 
+    /// Run `f` with access to this space's current encryption secrets, for encrypting and
+    /// decrypting auxiliary application data towards the space.
+    ///
+    /// See [`SpaceSecrets`](p2panda_spaces::SpaceSecrets) for the operations available inside the
+    /// closure.
+    pub async fn with_secrets<T>(
+        &self,
+        f: impl FnOnce(&p2panda_spaces::SpaceSecrets<'_>) -> T,
+    ) -> Result<T, InnerSpaceError> {
+        self.inner.with_secrets(f).await
+    }
+
     /// Gracefully close the space and any associated sync sessions.
     pub async fn close(self) -> Result<(), CloseError> {
         self.tx.close().await
