@@ -20,6 +20,7 @@ use crate::event::{Event, GroupActor, GroupContext, GroupEvent, SpaceContext, Sp
 use crate::manager::ManagerError;
 use crate::member::AuthenticatedMember;
 use crate::message::SpacesArgs;
+use crate::secrets::SecretsError;
 use crate::space::{Space, SpaceError, SpaceOutput};
 use crate::test_utils::{TestPeer, TestSpaceError};
 use crate::types::AuthGroupAction;
@@ -2463,4 +2464,119 @@ async fn removed_space_members() {
         vec![bob.manager.id()]
     );
     assert_eq!(space.removed().await.unwrap(), vec![bob.manager.id()]);
+}
+
+#[tokio::test]
+async fn aux_secrets() {
+    let alice = TestPeer::new(0).await;
+    let bob = TestPeer::new(1).await;
+
+    let bob_id = bob.manager.id();
+
+    alice
+        .manager
+        .register_member(&bob.me().await.unwrap())
+        .await
+        .unwrap();
+    bob.manager
+        .register_member(&alice.me().await.unwrap())
+        .await
+        .unwrap();
+
+    // Alice creates a space with Bob and encrypts auxiliary data towards it.
+
+    let space_id = SpaceId::digest(b"0");
+    let (alice_space, output) = alice
+        .manager
+        .create_space(space_id, &[(bob_id, Access::read())])
+        .await
+        .unwrap();
+    let (messages, _) = split_messages(output.messages);
+
+    let (secret_id, nonce, ciphertext) = alice_space
+        .with_secrets(|secrets| secrets.encrypt_aux(b"test/v1", b"Aux revoir!"))
+        .await
+        .unwrap()
+        .unwrap();
+
+    // The aux data was encrypted with the same secret the next application message would use.
+
+    assert_eq!(
+        alice_space
+            .with_secrets(|secrets| secrets.latest_secret_id())
+            .await
+            .unwrap(),
+        Some(secret_id)
+    );
+
+    // Bob processes Alice's messages and decrypts the aux data via the pinned secret id.
+
+    for message in &messages {
+        bob.persist_operation(message).await.unwrap();
+        bob.manager.process(message).await.unwrap();
+    }
+    let bob_space = bob.manager.space(space_id).joined().await.unwrap();
+
+    let plaintext = bob_space
+        .with_secrets(|secrets| secrets.decrypt_aux(secret_id, b"test/v1", nonce, &ciphertext))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(plaintext, b"Aux revoir!");
+
+    // A wrong domain label fails permanently, an unknown secret id is reported as such.
+
+    let result = bob_space
+        .with_secrets(|secrets| secrets.decrypt_aux(secret_id, b"test/v2", nonce, &ciphertext))
+        .await
+        .unwrap();
+    assert!(matches!(result, Err(SecretsError::Aux(_))));
+
+    let result = bob_space
+        .with_secrets(|secrets| secrets.decrypt_aux([0; 32], b"test/v1", nonce, &ciphertext))
+        .await
+        .unwrap();
+    assert!(matches!(result, Err(SecretsError::UnknownSecret(_))));
+
+    // Removing Bob rotates the group secret: new aux data is encrypted under a new secret id,
+    // while the old ciphertext stays decryptable via its pinned id.
+
+    let (message_remove_1, message_remove_2, _) =
+        split_space_output(alice_space.remove(bob_id).await.unwrap());
+
+    let (rotated_id, rotated_nonce, rotated_ciphertext) = alice_space
+        .with_secrets(|secrets| secrets.encrypt_aux(b"test/v1", b"After removal"))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_ne!(rotated_id, secret_id);
+
+    let plaintext = alice_space
+        .with_secrets(|secrets| secrets.decrypt_aux(secret_id, b"test/v1", nonce, &ciphertext))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(plaintext, b"Aux revoir!");
+
+    // Bob (removed) keeps the old secret but never learns the rotated one.
+
+    bob.persist_operation(&message_remove_1).await.unwrap();
+    bob.manager.process(&message_remove_1).await.unwrap();
+    bob.persist_operation(&message_remove_2).await.unwrap();
+    bob.manager.process(&message_remove_2).await.unwrap();
+
+    let plaintext = bob_space
+        .with_secrets(|secrets| secrets.decrypt_aux(secret_id, b"test/v1", nonce, &ciphertext))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(plaintext, b"Aux revoir!");
+
+    let result = bob_space
+        .with_secrets(|secrets| {
+            secrets.decrypt_aux(rotated_id, b"test/v1", rotated_nonce, &rotated_ciphertext)
+        })
+        .await
+        .unwrap();
+    assert!(matches!(result, Err(SecretsError::UnknownSecret(_))));
 }
