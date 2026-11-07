@@ -1597,3 +1597,39 @@ mod spaces_groups_membership {
         }
     }
 }
+
+mod aux_secrets {
+    use p2panda::Topic;
+    use p2panda_core::test_utils::setup_logging;
+
+    use super::{SecretData, Swarm};
+
+    #[tokio::test]
+    async fn aux_secrets_round_trip() -> Result<(), Box<dyn std::error::Error>> {
+        setup_logging();
+
+        let swarm = Swarm::new();
+        let panda = swarm.spawn_node().await;
+
+        let topic = Topic::random();
+        let (panda_space, _panda_rx) = panda.create_space::<SecretData>(topic).await?;
+
+        let (secret_id, nonce, ciphertext) = panda_space
+            .with_secrets(|secrets| secrets.encrypt_aux(b"test/v1", b"Aux data"))
+            .await??;
+
+        assert_eq!(
+            panda_space
+                .with_secrets(|secrets| secrets.latest_secret_id())
+                .await?,
+            Some(secret_id)
+        );
+
+        let plaintext = panda_space
+            .with_secrets(|secrets| secrets.decrypt_aux(secret_id, b"test/v1", nonce, &ciphertext))
+            .await??;
+        assert_eq!(plaintext, b"Aux data");
+
+        Ok(())
+    }
+}

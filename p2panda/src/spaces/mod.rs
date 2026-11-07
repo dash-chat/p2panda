@@ -18,7 +18,8 @@ use p2panda_store::SqliteStore;
 pub use p2panda_auth::AccessLevel;
 pub use p2panda_spaces::manager::ManagerError;
 pub use p2panda_spaces::{
-    ActorId, GroupContext, GroupId, MemberId, SpaceContext, SpaceId, space_group_id,
+    ActorId, GroupContext, GroupId, MemberId, SecretsError, SpaceContext, SpaceId, SpaceSecrets,
+    space_group_id,
 };
 
 pub(crate) use authoriser::SyncAuthoriserHook;
