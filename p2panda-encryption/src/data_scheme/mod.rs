@@ -84,7 +84,7 @@ pub mod test_utils;
 #[cfg(test)]
 mod tests;
 
-pub use data::{decrypt_data, encrypt_data};
+pub use data::{AuxError, decrypt_aux, decrypt_data, encrypt_aux, encrypt_data};
 pub use dcgka::{ControlMessage, DirectMessage, DirectMessageContent, DirectMessageType};
 pub use group::{EncryptionGroup, GroupError, GroupOutput, GroupResult, GroupState};
 pub use group_secret::{
