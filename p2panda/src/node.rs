@@ -727,7 +727,29 @@ impl Node {
         M: Serialize + for<'a> Deserialize<'a> + Send + 'static,
     {
         // TODO: Derive space id from the hash of the first control message.
-        let space_id = Topic::random().into();
+        self.create_space_at(Topic::random().into()).await
+    }
+
+    /// Create a space at a caller-chosen id, to test what happens when someone publishes a
+    /// create for an id that is already taken. Nothing but such a test should choose a space id.
+    #[cfg(feature = "test_space_ids")]
+    pub async fn create_space_with_id<M>(
+        &self,
+        space_id: impl Into<SpaceId>,
+    ) -> Result<(Space<M>, SpaceSubscription<M>), CreateSpaceError>
+    where
+        M: Serialize + for<'a> Deserialize<'a> + Send + 'static,
+    {
+        self.create_space_at(space_id.into()).await
+    }
+
+    async fn create_space_at<M>(
+        &self,
+        space_id: SpaceId,
+    ) -> Result<(Space<M>, SpaceSubscription<M>), CreateSpaceError>
+    where
+        M: Serialize + for<'a> Deserialize<'a> + Send + 'static,
+    {
 
         // Associate the space topic with our own member / key bundle log.
         tx!(&self.store, {
