@@ -146,6 +146,15 @@ fn process_spaces_events<M>(event: &Event, forward_events: &mut Vec<ForwardEvent
                 forward_events.push(ForwardEvent::system(to_system_event(
                     group_event.to_owned(),
                 )));
+
+                // Also hand them to the space's subscriber: the system event carries no
+                // operation, and the application needs the header of the group control
+                // operation behind a membership change.
+                forward_events.push(ForwardEvent::topic_stream(to_group_stream_event(
+                    group_event.to_owned(),
+                    event.clone(),
+                    group_event.group_id(),
+                )));
             }
             p2panda_spaces::Event::Spaces(space_event) => {
                 forward_events.push(ForwardEvent::topic_stream(to_space_stream_event(
