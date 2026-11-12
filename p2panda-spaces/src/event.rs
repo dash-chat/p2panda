@@ -13,7 +13,7 @@ use crate::utils::{
     added_members_diff, demoted_members_diff, promoted_members_diff, removed_members_diff,
     sort_members,
 };
-use crate::{ActorId, GroupId, MemberId, SpaceId};
+use crate::{ActorId, GroupId, MemberId, OperationId, SpaceId};
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct GroupActor {
@@ -66,7 +66,11 @@ pub enum Event<C> {
     ///
     /// Encrypted application messages are buffered until the local member is welcomed into a
     /// space with a "create" or "add" message.
-    Application { space_id: SpaceId, data: Vec<u8> },
+    Application {
+        space_id: SpaceId,
+        id: OperationId,
+        data: Vec<u8>,
+    },
 
     /// A membership change occurred on a space.
     ///
@@ -338,7 +342,8 @@ where
     encryption_output
         .into_iter()
         .filter_map(|event| match event {
-            EncryptionGroupOutput::Application { plaintext } => Some(Event::Application {
+            EncryptionGroupOutput::Application { id, plaintext } => Some(Event::Application {
+                id,
                 space_id: *space_id,
                 data: plaintext,
             }),

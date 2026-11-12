@@ -147,8 +147,10 @@ impl p2panda_encryption::traits::Ordering<MemberId, OperationId, EncryptionGroup
 
     fn queue(mut y: Self::State, message: &Self::Message) -> Result<Self::State, Self::Error> {
         let id = message.id();
-        y.messages.insert(id, message.clone());
-        y.queue.push_back(id);
+        // A message replayed before we are welcomed is queued only once.
+        if y.messages.insert(id, message.clone()).is_none() {
+            y.queue.push_back(id);
+        }
         Ok(y)
     }
 
@@ -168,11 +170,12 @@ impl p2panda_encryption::traits::Ordering<MemberId, OperationId, EncryptionGroup
             return Ok((y, None));
         };
 
+        // Removed, not read: this state is persisted, so a message kept here would outlive the
+        // deletion of its ciphertext.
         let message = y.queue.pop_front().map(|id| {
             y.messages
-                .get(&id)
+                .remove(&id)
                 .expect("ids map consistently to messages")
-                .to_owned()
         });
 
         Ok((y, message))

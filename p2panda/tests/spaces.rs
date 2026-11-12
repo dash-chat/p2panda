@@ -1877,3 +1877,76 @@ mod aux_secrets {
         Ok(())
     }
 }
+
+mod pre_join_application_message {
+    use std::time::Duration;
+
+    use futures_util::StreamExt;
+    use p2panda::AccessLevel;
+    use p2panda::operation::Operation;
+    use p2panda::spaces::application_log_id;
+    use p2panda::streams::StreamEvent;
+    use p2panda_core::test_utils::setup_logging;
+    use p2panda_store::logs::LogStore;
+    use p2panda_store::tx_unwrap;
+
+    use crate::{SecretData, Swarm};
+
+    fn secret(title: &str) -> SecretData {
+        SecretData {
+            title: title.to_string(),
+            content: "content".to_string(),
+        }
+    }
+
+    #[tokio::test]
+    async fn message_from_before_joining_arrives_as_its_own_operation()
+    -> Result<(), Box<dyn std::error::Error>> {
+        setup_logging();
+
+        let swarm = Swarm::new();
+        let panda = swarm.spawn_node().await;
+        let penguin = swarm.spawn_node().await;
+
+        let (panda_space, mut panda_rx) = panda.create_space::<SecretData>().await?;
+        let space_id = panda_space.id();
+
+        panda_space
+            .publish(secret("before joining"))
+            .await?
+            .await?;
+
+        let store = panda.store();
+        let published = tx_unwrap!(store, {
+            store
+                .get_latest_entry_tx(&panda.id(), &application_log_id(space_id))
+                .await?
+                .expect("panda published into its application log")
+        });
+        let published = Operation::try_from(published)?;
+
+        let (_penguin_space, mut penguin_rx) = penguin.space::<SecretData>(space_id).await?;
+        while let Some(event) = panda_rx.next().await {
+            if matches!(event, StreamEvent::Member(member) if member == penguin.id()) {
+                break;
+            }
+        }
+        panda_space.add(penguin.id(), AccessLevel::Write).await?;
+
+        let received = tokio::time::timeout(Duration::from_secs(15), async {
+            while let Some(event) = penguin_rx.next().await {
+                if let StreamEvent::Processed { operation, .. } = event {
+                    return Some(operation);
+                }
+            }
+            None
+        })
+        .await?
+        .expect("penguin receives the message");
+
+        assert_eq!(received.message().title, "before joining");
+        assert_eq!(received.id(), published.hash);
+
+        Ok(())
+    }
+}

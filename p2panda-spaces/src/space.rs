@@ -907,6 +907,7 @@ where
 
         let event = Event::Application {
             space_id: space_y.space_id,
+            id: message.hash(),
             data: plaintext.to_owned(),
         };
 

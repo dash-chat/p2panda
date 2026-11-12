@@ -43,6 +43,10 @@ impl Acked {
         }
     }
 
+    pub(crate) fn store(&self) -> &SqliteStore {
+        &self.store
+    }
+
     #[allow(unused)]
     pub fn cursor_name(&self) -> &str {
         &self.cursor_name
