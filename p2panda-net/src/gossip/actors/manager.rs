@@ -299,7 +299,10 @@ impl ThreadLocalActor for GossipManager {
             }
             ToGossipManager::ReceivedMessage { bytes, topic, .. } => {
                 if let Some((_, from_gossip_tx)) = state.sessions.gossip_senders.get(&topic) {
-                    let _number_of_subscribers = from_gossip_tx.send(bytes)?;
+                    // Sending fails when there are currently no subscribers for this topic, for
+                    // example when the message arrives after joining the overlay but before the
+                    // user subscribed to the stream. This is not an error, the message is dropped.
+                    let _number_of_subscribers = from_gossip_tx.send(bytes);
                 }
             }
             ToGossipManager::Joined {
