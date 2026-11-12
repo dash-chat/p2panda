@@ -2,7 +2,9 @@
 
 //! Access to a space's encryption secrets for encrypting auxiliary application data.
 use p2panda_encryption::crypto::xchacha20::XAeadNonce;
-use p2panda_encryption::data_scheme::{AuxError, GroupSecretId, decrypt_aux, encrypt_aux};
+use p2panda_encryption::data_scheme::{
+    AuxError, GroupSecretId, decrypt_aux, decrypt_data, encrypt_aux,
+};
 use p2panda_encryption::{Rng, RngError};
 use thiserror::Error;
 
@@ -84,6 +86,23 @@ impl<'a> SpaceSecrets<'a> {
             return Err(SecretsError::UnknownSecret(group_secret_id));
         };
         let plaintext = decrypt_aux(ciphertext, secret, info, nonce)?;
+        Ok(plaintext)
+    }
+
+    /// Decrypt the ciphertext of one of the space's own application messages, for reading a
+    /// message back after it was processed.
+    ///
+    /// Fails like [`decrypt_aux`](Self::decrypt_aux).
+    pub fn decrypt(
+        &self,
+        group_secret_id: GroupSecretId,
+        nonce: XAeadNonce,
+        ciphertext: &[u8],
+    ) -> Result<Vec<u8>, SecretsError> {
+        let Some(secret) = self.encryption_y.secrets.get(&group_secret_id) else {
+            return Err(SecretsError::UnknownSecret(group_secret_id));
+        };
+        let plaintext = decrypt_data(ciphertext, secret, nonce).map_err(AuxError::from)?;
         Ok(plaintext)
     }
 }
