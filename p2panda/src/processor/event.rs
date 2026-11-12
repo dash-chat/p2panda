@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::spaces::member_processor::{MembersProcessorError, MembersProcessorResult};
+use crate::spaces::message::with_ciphertext_from_body;
 use crate::spaces::types::{AuthCapabilities, SpacesArgs, SpacesEvent};
 use crate::streams::Source;
 
@@ -89,6 +90,9 @@ where
         spaces_args: Option<SpacesArgs>,
         spaces_events: Option<Vec<SpacesEvent>>,
     ) -> Self {
+        let spaces_args =
+            spaces_args.map(|args| with_ciphertext_from_body(args, operation.body.as_ref()));
+
         Self {
             ingest_args: IngestArgs {
                 log_id: log_id.clone(),

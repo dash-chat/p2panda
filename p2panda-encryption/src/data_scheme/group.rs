@@ -395,7 +395,13 @@ where
                 nonce,
             } => {
                 let (y_i, plaintext) = Self::decrypt(y, nonce, group_secret_id, ciphertext)?;
-                Ok((y_i, Some(GroupOutput::Application { plaintext })))
+                Ok((
+                    y_i,
+                    Some(GroupOutput::Application {
+                        id: message.id(),
+                        plaintext,
+                    }),
+                ))
             }
         }
     }
@@ -474,7 +480,7 @@ where
     Control(ORD::Message),
 
     /// Decrypted payload of message.
-    Application { plaintext: Vec<u8> },
+    Application { id: OP, plaintext: Vec<u8> },
 
     /// Signal that we've been removed from the group.
     Removed,
@@ -536,7 +542,7 @@ mod tests {
         ORD: Ordering<ID, OP, DGM>,
     {
         let message = messages.first().expect("expected at least one message");
-        if let GroupOutput::Application { plaintext } = message {
+        if let GroupOutput::Application { plaintext, .. } = message {
             assert_eq!(
                 plaintext, expected_payload,
                 "expected payload does not match"

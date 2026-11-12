@@ -177,21 +177,32 @@ impl p2panda_spaces::Forge<AuthCapabilities> for OperationForge {
             // 4. Application logs.
             p2panda_spaces::SpacesArgs::Application {
                 space_id,
-                ref ciphertext,
-                ..
+                space_dependencies,
+                proof,
+                group_secret_id,
+                nonce,
+                ciphertext,
             } => {
-                // TODO: This should be plaintext. We encrypt _later_ in the processor.
-                let _body = ciphertext.clone();
-
                 // Every author maintains their own log of application messages _per_ space.
                 let log_id = application_log_id(space_id);
 
-                let extensions = Extensions::builder(log_id).build_space(args);
+                // The ciphertext travels in the body, which can be deleted without breaking the
+                // log, unlike the header.
+                let extensions = Extensions::builder(log_id).build_space(
+                    p2panda_spaces::SpacesArgs::Application {
+                        space_id,
+                        space_dependencies,
+                        proof,
+                        group_secret_id,
+                        nonce,
+                        ciphertext: None,
+                    },
+                );
 
                 // Associate this log with the space id / topic.
                 let topic = Topic::from(space_id);
 
-                self.create_operation_tx(Some(topic), log_id, None, extensions)
+                self.create_operation_tx(Some(topic), log_id, ciphertext, extensions)
                     .await?
             }
         };

@@ -1877,3 +1877,148 @@ mod aux_secrets {
         Ok(())
     }
 }
+
+mod deleted_application_message {
+    use std::time::Duration;
+
+    use futures_util::StreamExt;
+    use p2panda::AccessLevel;
+    use p2panda::operation::{ExtensionsVariantV1, Operation};
+    use p2panda::spaces::application_log_id;
+    use p2panda::streams::StreamEvent;
+    use p2panda_core::Hash;
+    use p2panda_core::test_utils::setup_logging;
+    use p2panda_spaces::SpacesArgs;
+    use p2panda_store::logs::LogStore;
+    use p2panda_store::operations::OperationStore;
+    use p2panda_store::tx_unwrap;
+
+    use crate::{SecretData, Swarm};
+
+    fn secret(title: &str) -> SecretData {
+        SecretData {
+            title: title.to_string(),
+            content: "content".to_string(),
+        }
+    }
+
+    #[tokio::test]
+    async fn new_member_never_receives_a_deleted_message() -> Result<(), Box<dyn std::error::Error>>
+    {
+        setup_logging();
+
+        let swarm = Swarm::new();
+        let panda = swarm.spawn_node().await;
+        let penguin = swarm.spawn_node().await;
+
+        let (panda_space, mut panda_rx) = panda.create_space::<SecretData>().await?;
+        let space_id = panda_space.id();
+
+        panda_space.publish(secret("kept")).await?.await?;
+        panda_space.publish(secret("deleted")).await?.await?;
+
+        let store = panda.store();
+        let deleted = tx_unwrap!(store, {
+            store
+                .get_latest_entry_tx(&panda.id(), &application_log_id(space_id))
+                .await?
+                .expect("panda published into its application log")
+        });
+        let deleted = Operation::try_from(deleted)?;
+
+        let ExtensionsVariantV1::Space(extensions) = &deleted.header.extensions.variant else {
+            panic!("application messages carry space extensions");
+        };
+        assert!(matches!(
+            extensions.args,
+            SpacesArgs::Application {
+                ciphertext: None,
+                ..
+            }
+        ));
+        assert!(deleted.body.is_some());
+
+        tx_unwrap!(store, {
+            OperationStore::<Operation, Hash>::delete_operation_payload_tx(&store, &deleted.hash)
+                .await?
+        });
+
+        let (_penguin_space, mut penguin_rx) = penguin.space::<SecretData>(space_id).await?;
+        while let Some(event) = panda_rx.next().await {
+            if matches!(event, StreamEvent::Member(member) if member == penguin.id()) {
+                break;
+            }
+        }
+        panda_space.add(penguin.id(), AccessLevel::Write).await?;
+
+        panda_space
+            .publish(secret("published after the deletion"))
+            .await?
+            .await?;
+
+        let mut received = Vec::new();
+        let receive_all = async {
+            while let Some(event) = penguin_rx.next().await {
+                if let StreamEvent::Processed { operation, .. } = event {
+                    received.push(operation.message().title.clone());
+                }
+            }
+        };
+        let _ = tokio::time::timeout(Duration::from_secs(15), receive_all).await;
+
+        assert_eq!(received, ["kept", "published after the deletion"]);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn message_from_before_joining_arrives_as_its_own_operation()
+    -> Result<(), Box<dyn std::error::Error>> {
+        setup_logging();
+
+        let swarm = Swarm::new();
+        let panda = swarm.spawn_node().await;
+        let penguin = swarm.spawn_node().await;
+
+        let (panda_space, mut panda_rx) = panda.create_space::<SecretData>().await?;
+        let space_id = panda_space.id();
+
+        panda_space
+            .publish(secret("before joining"))
+            .await?
+            .await?;
+
+        let store = panda.store();
+        let published = tx_unwrap!(store, {
+            store
+                .get_latest_entry_tx(&panda.id(), &application_log_id(space_id))
+                .await?
+                .expect("panda published into its application log")
+        });
+        let published = Operation::try_from(published)?;
+
+        let (_penguin_space, mut penguin_rx) = penguin.space::<SecretData>(space_id).await?;
+        while let Some(event) = panda_rx.next().await {
+            if matches!(event, StreamEvent::Member(member) if member == penguin.id()) {
+                break;
+            }
+        }
+        panda_space.add(penguin.id(), AccessLevel::Write).await?;
+
+        let received = tokio::time::timeout(Duration::from_secs(15), async {
+            while let Some(event) = penguin_rx.next().await {
+                if let StreamEvent::Processed { operation, .. } = event {
+                    return Some(operation);
+                }
+            }
+            None
+        })
+        .await?
+        .expect("penguin receives the message");
+
+        assert_eq!(received.message().title, "before joining");
+        assert_eq!(received.id(), published.hash);
+
+        Ok(())
+    }
+}

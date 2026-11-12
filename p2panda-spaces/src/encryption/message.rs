@@ -47,14 +47,13 @@ pub enum EncryptionMessage {
 
 impl EncryptionMessage {
     /// Construct an encryption message from a space application message.
-    pub(crate) fn from_application(space_message: &ApplicationMessage) -> Self {
+    pub(crate) fn from_application(space_message: &ApplicationMessage, ciphertext: &[u8]) -> Self {
         let ApplicationMessage {
             id,
             author,
             space_dependencies,
             group_secret_id,
             nonce,
-            ciphertext,
             ..
         } = space_message;
 

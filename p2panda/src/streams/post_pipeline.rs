@@ -4,14 +4,16 @@ use std::sync::Arc;
 
 use crate::egress::StreamType;
 use crate::node::AckPolicy;
+use crate::operation::Operation;
 use crate::processor::ProcessorStatus;
 use crate::streams::acked::Acked;
 use crate::streams::stream::{to_group_stream_event, to_space_stream_event, to_system_event};
 use crate::streams::{Event, ForwardEvent, ProcessedOperation, StreamEvent};
-use p2panda_core::Topic;
+use p2panda_core::{Hash, Topic};
 use p2panda_core::cbor::decode_cbor;
 use p2panda_core::traits::Digest;
 use p2panda_spaces::GroupId;
+use p2panda_store::operations::OperationStore;
 use p2panda_stream::spaces::SpacesResult;
 use serde::Deserialize;
 use tracing::{debug, warn};
@@ -78,18 +80,19 @@ where
     //
     // 1. Regular topic-streams
     // 2. Encrypted application messages from spaces-streams
-    let application_bodies = application_bodies(&event);
-    for bytes in &application_bodies {
-        let success = decode_application_event(&event, topic, acked, bytes, &mut forward_events);
+    let application_messages = application_messages(&event, topic, acked).await;
+    for (message_event, bytes) in &application_messages {
+        let success =
+            decode_application_event(message_event, topic, acked, bytes, &mut forward_events);
 
         // Only ack events automatically if decoding did not fail.
         if success {
-            ack_if_automatic(&event, ack_policy, acked, &mut forward_events).await;
+            ack_if_automatic(message_event, ack_policy, acked, &mut forward_events).await;
         }
     }
 
     // Always ack events which don't have an application body and are not spaces events.
-    if application_bodies.is_empty() && !is_spaces_event(&event) {
+    if application_messages.is_empty() && !is_spaces_event(&event) {
         always_ack(&event, acked, &mut forward_events).await;
     }
 
@@ -105,24 +108,48 @@ fn is_spaces_event(event: &Event) -> bool {
     event.operation.header.extensions.spaces_args().is_some()
 }
 
-/// Extracts the bodies from an event which are meant for the application layer.
-fn application_bodies(event: &Event) -> Vec<&[u8]> {
-    // There can be multiple application bodies inside own spaces event.
-    if let ProcessorStatus::Completed(SpacesResult::Processed { ref events }) = event.spaces {
-        events
-            .iter()
-            .filter_map(|space_event| match space_event {
-                p2panda_spaces::Event::Application { data, .. } => Some(data.as_slice()),
-                _ => None,
-            })
-            .collect()
-    } else {
-        event
+/// Application messages an event hands to the application layer, each with the event of the
+/// operation which carries it.
+///
+/// A spaces event can release messages of other operations: everything published before we were
+/// welcomed into the space stays buffered until the welcome arrives.
+async fn application_messages(event: &Event, topic: Topic, acked: &Acked) -> Vec<(Event, Vec<u8>)> {
+    let ProcessorStatus::Completed(SpacesResult::Processed { ref events }) = event.spaces else {
+        return event
             .body()
-            .map(|body| body.as_bytes())
+            .map(|body| (event.clone(), body.to_bytes()))
             .into_iter()
-            .collect()
+            .collect();
+    };
+
+    let mut messages = Vec::new();
+    for space_event in events {
+        let p2panda_spaces::Event::Application { id, data, .. } = space_event else {
+            continue;
+        };
+        if *id == event.hash() {
+            messages.push((event.clone(), data.clone()));
+            continue;
+        }
+        match OperationStore::<Operation, Hash>::get_operation(acked.store(), id).await {
+            Ok(Some(operation)) => {
+                let extensions = &operation.header.extensions;
+                let message_event = Event::new(
+                    operation.clone(),
+                    event.source.clone(),
+                    extensions.log_id(),
+                    topic,
+                    extensions.prune_flag(),
+                    extensions.spaces_args(),
+                    None,
+                );
+                messages.push((message_event, data.clone()));
+            }
+            Ok(None) => warn!(%id, "operation of a decrypted application message is gone"),
+            Err(error) => warn!(%id, "loading operation of an application message failed: {error}"),
+        }
     }
+    messages
 }
 
 /// Handle processed spaces events.

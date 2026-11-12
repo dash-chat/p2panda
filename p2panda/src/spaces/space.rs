@@ -287,6 +287,19 @@ where
     ///  Every message published into a space can be decrypted by it's members.
     #[allow(clippy::result_large_err)]
     pub async fn publish(&self, message: M) -> Result<SpaceFuture, PublishSpaceError> {
+        self.publish_with(message, |_| {}).await
+    }
+
+    /// Publishes a message into the space, calling `before_send` with the operation's hash before
+    /// the operation enters the processing pipeline.
+    ///
+    /// See [`StreamPublisher::publish_with`].
+    #[allow(clippy::result_large_err)]
+    pub async fn publish_with(
+        &self,
+        message: M,
+        before_send: impl FnOnce(Hash),
+    ) -> Result<SpaceFuture, PublishSpaceError> {
         let members = self.actors().await.map_err(Box::new)?;
 
         can_write(self.inner.me(), &members).map_err(|err| PublishSpaceError::Validation {
@@ -309,9 +322,11 @@ where
 
         // We don't need to persist state or pass enriched events through the pipeline as the spaces
         // processor can re-process this event.
+        let operation = message.into_operation();
+        before_send(operation.hash);
         let processed = self
             .egress_handle
-            .dispatch(message.into_operation(), self.id().into())
+            .dispatch(operation, self.id().into())
             .await?;
 
         Ok(SpaceFuture {

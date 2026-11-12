@@ -581,8 +581,16 @@ where
             HashSet::from_iter(message.proof.clone()),
         )?;
 
+        let Some(ciphertext) = &message.ciphertext else {
+            space_y
+                .encryption_y
+                .orderer
+                .add_dependency(message.id, &message.space_dependencies);
+            return Ok((space_y, vec![]));
+        };
+
         // Process encryption message.
-        let encryption_message = EncryptionMessage::from_application(message);
+        let encryption_message = EncryptionMessage::from_application(message, ciphertext);
         let (encryption_y, encryption_output) =
             EncryptionGroup::receive(space_y.encryption_y, &encryption_message)?;
 
@@ -891,7 +899,7 @@ where
                 proof: space_y.groups_y.heads(&[space_y.group_id]),
                 group_secret_id,
                 nonce,
-                ciphertext,
+                ciphertext: Some(ciphertext),
             };
             (args, dependencies)
         };
@@ -907,6 +915,7 @@ where
 
         let event = Event::Application {
             space_id: space_y.space_id,
+            id: message.hash(),
             data: plaintext.to_owned(),
         };
 

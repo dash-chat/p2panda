@@ -129,7 +129,7 @@ impl Network {
                             // Processing messages might yield new ones, process these as well.
                             self.queue.push_back(control_message);
                         }
-                        GroupOutput::Application { plaintext } => decrypted_messages.push((
+                        GroupOutput::Application { plaintext, .. } => decrypted_messages.push((
                             message.sender(), // Sender
                             *id,              // Receiver
                             plaintext,        // Decrypted content

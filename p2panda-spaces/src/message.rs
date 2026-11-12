@@ -107,7 +107,7 @@ pub(crate) struct ApplicationMessage {
     pub proof: Vec<Hash>,
     pub group_secret_id: GroupSecretId,
     pub nonce: XAeadNonce,
-    pub ciphertext: Vec<u8>,
+    pub ciphertext: Option<Vec<u8>>,
 }
 
 impl<C> SpacesMessage<C>
@@ -260,8 +260,9 @@ pub enum SpacesArgs<C> {
         /// Used nonce for AEAD.
         nonce: XAeadNonce,
 
-        /// Encrypted application data.
-        ciphertext: Vec<u8>,
+        /// Encrypted application data, `None` once it has been deleted. The message itself
+        /// stays, since later messages depend on it.
+        ciphertext: Option<Vec<u8>>,
     },
 }
 
