@@ -7,11 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Highlights are marked with a pancake 🥞
 
+## Unreleased
+
+### Fixed
+
+- sync: Drop the session that has no sender instead of the sending session [#1593](https://github.com/p2panda/p2panda/pull/1593)
+- node: Fix unexposed error types [#1590](https://github.com/p2panda/p2panda/pull/1590)
+- node: Correct operation id assignment for buffered application messages [#1575](https://github.com/p2panda/p2panda/pull/1575)
+
 ## [0.8.0] - 09/11/2026
 
 ### Added
 
-- node: Add custom_cursor_name optional param to Node::stream_from [1408](https://github.com/p2panda/p2panda/pull/1408)
+- node: Add custom_cursor_name optional param to Node::stream_from [#1408](https://github.com/p2panda/p2panda/pull/1408)
 - net: `SyncHook` intercepting sync sessions to accept or reject them [#1451](https://github.com/p2panda/p2panda/pull/1451)
 - net: Introduce an `Authoriser` for maintaining and enforcing allow- and blocklists [#1321](https://github.com/p2panda/p2panda/pull/1321)
 - net: Use network id to separate mDNS discovery [#1511](https://github.com/p2panda/p2panda/pull/1511)
@@ -38,8 +46,8 @@ Highlights are marked with a pancake 🥞
 - spaces: Validate write authority when processing application messages [#1295](https://github.com/p2panda/p2panda/pull/1295)
 - store: Add `resolve_topics` method to `TopicStore` trait [#1261](https://github.com/p2panda/p2panda/pull/1261)
 - store: Introduce `ProcessorStore` for storing event metadata from p2panda pipeline [#1262](https://github.com/p2panda/p2panda/pull/1262)
-- store: Add method on TopicStore to get all topics - [#1388](https://github.com/p2panda/p2panda/pull/1388)
-- store: `clear` & `clear_keys` methods for OrdererStore - [#1466](https://github.com/p2panda/p2panda/pull/1466)
+- store: Add method on TopicStore to get all topics [#1388](https://github.com/p2panda/p2panda/pull/1388)
+- store: `clear` & `clear_keys` methods for OrdererStore [#1466](https://github.com/p2panda/p2panda/pull/1466)
 - stream: Filter out spaces application messages from concurrently removed members [#1291](https://github.com/p2panda/p2panda/pull/1291)
 - stream: Hooks processor to register event callbacks in streaming pipeline [#1339](https://github.com/p2panda/p2panda/pull/1339)
 - stream: Move orderer processor from node to stream [#1312](https://github.com/p2panda/p2panda/pull/1312)
@@ -53,7 +61,7 @@ Highlights are marked with a pancake 🥞
 - sync: Method to resolve log heights from topic [#1405](https://github.com/p2panda/p2panda/pull/1405)
 - sync: Re-export -stream ingest_operation in `api` module [#1406](https://github.com/p2panda/p2panda/pull/1406)
 - stream: Forward events of already processed operations in spaces processor [#1430](https://github.com/p2panda/p2panda/pull/1430)
-- auth: Add method for checking if actor id is a group [1483](https://github.com/p2panda/p2panda/pull/1483)
+- auth: Add method for checking if actor id is a group [#1483](https://github.com/p2panda/p2panda/pull/1483)
 - node: Add groups processor to pipeline [#1485](https://github.com/p2panda/p2panda/pull/1485)
 - node: Groups hook for associating group logs with topic [#1487](https://github.com/p2panda/p2panda/pull/1487)
 - node: Debouncer w/ throttle for repair task [#1499](https://github.com/p2panda/p2panda/pull/1499)
