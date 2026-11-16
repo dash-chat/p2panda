@@ -261,6 +261,7 @@ pub enum SpacesArgs<C> {
         nonce: XAeadNonce,
 
         /// Encrypted application data.
+        #[serde(with = "serde_bytes")]
         ciphertext: Vec<u8>,
     },
 }
