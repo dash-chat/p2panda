@@ -26,6 +26,8 @@ default = []
 test_utils = [
   "dep:tracing-subscriber",
 ]
+# Lets a test create a space at an id of its choosing. Never enable outside tests.
+test_space_ids = []
 
 [dependencies]
 futures-util = { workspace = true }
