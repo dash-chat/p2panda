@@ -755,7 +755,6 @@ impl Node {
     where
         M: Serialize + for<'a> Deserialize<'a> + Send + 'static,
     {
-
         // Associate the space topic with our own member / key bundle log.
         tx!(&self.store, {
             self.store
