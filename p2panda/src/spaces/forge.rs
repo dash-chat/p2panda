@@ -3,13 +3,19 @@
 use std::io::Write;
 
 use p2panda_core::cbor::encode_cbor;
-use p2panda_core::{Hash, Topic, VerifyingKey};
+use p2panda_core::{Hash, Timestamp, Topic, VerifyingKey};
 use p2panda_spaces::SpaceId;
 use p2panda_store::SqliteError;
 use thiserror::Error;
 
 use crate::forge::{ForgeError, OperationForge};
 use crate::operation::{Extensions, LogId};
+
+tokio::task_local! {
+    /// The timestamp to forge an application message with instead of the current time, set
+    /// around the forging by [`Space::publish_at_with`](crate::spaces::Space::publish_at_with).
+    pub(crate) static APPLICATION_TIMESTAMP: Timestamp;
+}
 use crate::spaces::message::SpacesMessage;
 use crate::spaces::types::AuthCapabilities;
 
@@ -188,7 +194,11 @@ impl p2panda_spaces::Forge<AuthCapabilities> for OperationForge {
                 // Every author maintains their own log of application messages _per_ space.
                 let log_id = application_log_id(space_id);
 
-                let extensions = Extensions::builder(log_id).build_space(args.into());
+                let mut extensions = Extensions::builder(log_id);
+                if let Ok(timestamp) = APPLICATION_TIMESTAMP.try_with(|timestamp| *timestamp) {
+                    extensions = extensions.timestamp(timestamp);
+                }
+                let extensions = extensions.build_space(args.into());
 
                 // Associate this log with the space id / topic.
                 let topic = Topic::from(space_id);

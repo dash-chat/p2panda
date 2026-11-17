@@ -9,15 +9,16 @@ use p2panda_auth::validation::{
     can_add_member, can_demote_member, can_promote_member, can_remove_member, can_write,
 };
 use p2panda_auth::{Access, AccessLevel};
-use p2panda_core::Hash;
 use p2panda_core::cbor::{EncodeError, encode_cbor};
 use p2panda_core::traits::ShortFormat;
+use p2panda_core::{Hash, Timestamp};
 use p2panda_spaces::{ActorId, MemberId, SpaceId};
 use p2panda_store::{SqliteError, SqliteStore};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::egress::{EgressError, EgressHandle, SubmitError, SubmitFuture};
+use crate::spaces::forge::APPLICATION_TIMESTAMP;
 use crate::spaces::is_group;
 use crate::spaces::message::SpacesMessage;
 use crate::spaces::repair::{RepairCommandError, RepairTask};
@@ -302,6 +303,32 @@ where
         message: M,
         before_send: impl FnOnce(Hash),
     ) -> Result<SpaceFuture, PublishSpaceError> {
+        self.publish_inner(message, None, before_send).await
+    }
+
+    /// Publish as [`publish_with`](Self::publish_with) does, with the operation carrying
+    /// `timestamp` instead of the current time.
+    ///
+    /// This is for publishing a message again that its author first wrote elsewhere, at the time
+    /// they wrote it. Nothing else should date an operation.
+    #[allow(clippy::result_large_err)]
+    pub async fn publish_at_with(
+        &self,
+        message: M,
+        timestamp: Timestamp,
+        before_send: impl FnOnce(Hash),
+    ) -> Result<SpaceFuture, PublishSpaceError> {
+        self.publish_inner(message, Some(timestamp), before_send)
+            .await
+    }
+
+    #[allow(clippy::result_large_err)]
+    async fn publish_inner(
+        &self,
+        message: M,
+        timestamp: Option<Timestamp>,
+        before_send: impl FnOnce(Hash),
+    ) -> Result<SpaceFuture, PublishSpaceError> {
         let members = self.actors().await.map_err(Box::new)?;
 
         can_write(self.inner.me(), &members).map_err(|err| PublishSpaceError::Validation {
@@ -320,7 +347,12 @@ where
         //
         // We could also handle this outside of p2panda-spaces, simply by coming up with an argument
         // in the extensions for the spaces processor in p2panda-stream.
-        let (message, _) = self.inner.publish(&body_bytes).await.map_err(Box::new)?;
+        let forging = self.inner.publish(&body_bytes);
+        let forged = match timestamp {
+            Some(timestamp) => APPLICATION_TIMESTAMP.scope(timestamp, forging).await,
+            None => forging.await,
+        };
+        let (message, _) = forged.map_err(Box::new)?;
         let operation = message.into_operation();
         let hash = operation.hash;
         before_send(hash);
