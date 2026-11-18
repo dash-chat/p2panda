@@ -200,10 +200,7 @@ impl AnyHeader {
                 .strictness(cbor_core::Strictness::STRICT)
                 // Make sure some attacks are mitigated and set rather low / pessimistic thresholds.
                 .recursion_limit(64)
-                // TODO: revert to 512 bytes once spaces carry the encrypted payload in the body.
-                // Until then the ciphertext of an application message sits in the header's
-                // extensions, so a header must hold a message as large as dash-chat allows.
-                .length_limit(16 * 1024 * 1024) // 16 MiB
+                .length_limit(512) // 0.5kb
                 .oom_mitigation(64);
 
             codec.decode(bytes).map_err(HeaderError::DecodingHeader)?
