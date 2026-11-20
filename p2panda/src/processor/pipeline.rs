@@ -24,6 +24,7 @@ use tokio::task::LocalSet;
 use tokio_stream::wrappers::ReceiverStream;
 use tracing::warn;
 
+use crate::processor::event::GroupsArgsExtension;
 use crate::processor::tasks::TaskTracker;
 use crate::processor::{Event, ProcessorStatus};
 use crate::spaces::types::{SpacesManager, SpacesProcessor};
@@ -163,7 +164,7 @@ where
     // NOTE: Unfortunately there's no scoped "spawn_local" yet (it's an experimental tokio feature)
     // and we need to require a Send + 'static trait bounds, even though it's not used anywhere.
     L: LogId + Send + Sync + 'static,
-    E: Extensions + Send + Sync + 'static,
+    E: Extensions + GroupsArgsExtension + Send + Sync + 'static,
     TP: Clone + Send + Sync + Serialize + for<'a> Deserialize<'a> + 'static,
 {
     /// Creates a new "event processor" pipeline.

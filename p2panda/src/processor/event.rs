@@ -243,10 +243,28 @@ pub struct EventMetadata<L, TP> {
     source: Source,
 }
 
+/// Extensions which can carry the arguments for the "groups" processor.
+pub(crate) trait GroupsArgsExtension {
+    fn groups_args(&self) -> Option<GroupsArgs>;
+}
+
+impl GroupsArgsExtension for crate::operation::Extensions {
+    fn groups_args(&self) -> Option<GroupsArgs> {
+        self.group_args()
+    }
+}
+
+#[cfg(test)]
+impl GroupsArgsExtension for () {
+    fn groups_args(&self) -> Option<GroupsArgs> {
+        None
+    }
+}
+
 impl<L, E, TP> OrdererMetadata<E> for Event<L, E, TP>
 where
     L: LogId,
-    E: Extensions,
+    E: Extensions + GroupsArgsExtension,
     TP: Clone + Serialize + for<'a> Deserialize<'a>,
 {
     type Metadata = EventMetadata<L, TP>;
@@ -271,6 +289,8 @@ where
     }
 
     fn from_operation(operation: Operation<E>, meta: Self::Metadata) -> Self {
+        // Groups args are not part of the persisted metadata, the header carries them.
+        let groups_args = operation.header.extensions.groups_args();
         Self::new(
             operation,
             meta.source,
@@ -278,7 +298,7 @@ where
             meta.topic,
             meta.prune_flag,
             meta.spaces_args,
-            None,
+            groups_args,
         )
     }
 }
