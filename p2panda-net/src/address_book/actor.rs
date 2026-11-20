@@ -434,25 +434,17 @@ mod tests {
                 ConnectionOutcome::Failed,
             ))
             .unwrap();
-        let result = call!(
-            actor,
-            ToAddressBookActor::NodeInfo,
-            args.verifying_key
-        )
-        .unwrap()
-        .expect("node info exists in store");
+        let result = call!(actor, ToAddressBookActor::NodeInfo, args.verifying_key)
+            .unwrap()
+            .expect("node info exists in store");
         assert!(result.is_stale());
 
         actor
             .send_message(ToAddressBookActor::ForgetFailedConnections)
             .unwrap();
-        let result = call!(
-            actor,
-            ToAddressBookActor::NodeInfo,
-            args.verifying_key
-        )
-        .unwrap()
-        .expect("node info exists in store");
+        let result = call!(actor, ToAddressBookActor::NodeInfo, args.verifying_key)
+            .unwrap()
+            .expect("node info exists in store");
         assert!(!result.is_stale());
     }
 
