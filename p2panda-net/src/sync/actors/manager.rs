@@ -6,7 +6,6 @@
 //! sub-systems.
 use std::collections::HashMap;
 use std::marker::PhantomData;
-use std::sync::Arc;
 
 use iroh::endpoint::{Connection, VarInt};
 use iroh::protocol::ProtocolHandler;
@@ -16,7 +15,7 @@ use p2panda_sync::protocols::{TopicHandshakeAcceptor, TopicHandshakeEvent, Topic
 use p2panda_sync::traits::{Manager as SyncManagerTrait, Protocol};
 use ractor::thread_local::{ThreadLocalActor, ThreadLocalActorSpawner};
 use ractor::{ActorId, ActorProcessingErr, ActorRef, RpcReplyPort, SupervisionEvent};
-use tokio::sync::{RwLock, broadcast, oneshot};
+use tokio::sync::{broadcast, oneshot};
 use tokio::task::JoinHandle;
 use tracing::{debug, warn};
 
@@ -87,10 +86,6 @@ struct TopicManagers<T> {
 /// Mapping of topic to the regarding gossip overlays dealing with the membership handling.
 type GossipHandles = HashMap<Topic, (GossipHandle, JoinHandle<()>)>;
 
-/// Mapping between the "mixed" topic (key) used for gossip and it's "original" version (value)
-/// used by sync.
-type GossipTopicMap = Arc<RwLock<HashMap<Topic, Topic>>>;
-
 impl<T> Default for TopicManagers<T> {
     fn default() -> Self {
         Self {
@@ -111,7 +106,6 @@ where
     gossip_handles: GossipHandles,
     topic_managers: TopicManagers<M::Message>,
     sync_receivers: TopicManagerReceivers<M::Event>,
-    gossip_topics: GossipTopicMap,
     sync_args: M::Args,
     thread_pool: ThreadLocalActorSpawner,
 }
@@ -147,7 +141,6 @@ where
         // we're defining a constant with which topics from the user will be mixed to derive a new
         // one.
         let gossip_topic = derive_topic(topic, GOSSIP_TOPIC_MIX_VALUE);
-        self.gossip_topics.write().await.insert(gossip_topic, topic);
 
         debug!(
             sync_topic = topic.fmt_short(),
@@ -167,7 +160,6 @@ where
         // whom we're running sync sessions with.
         let gossip_events_handle = {
             let myself = myself.clone();
-            let gossip_topics = self.gossip_topics.clone();
 
             tokio::spawn(async move {
                 loop {
@@ -176,28 +168,14 @@ where
                         break;
                     };
 
-                    let (topic_from_event, nodes, is_initiate) = match event {
-                        GossipEvent::Joined { topic, ref nodes } => {
-                            (topic, Vec::from_iter(nodes.iter().cloned()), true)
-                        }
-                        GossipEvent::NeighbourUp { node, topic } => (topic, vec![node], true),
-                        GossipEvent::NeighbourDown { node, topic } => (topic, vec![node], false),
-                        GossipEvent::Left { .. } => {
-                            continue;
-                        }
-                    };
-
-                    let Some(sync_topic) =
-                        gossip_topics.read().await.get(&topic_from_event).cloned()
-                    else {
+                    let Some((nodes, neighbours)) = neighbour_change_on(gossip_topic, event) else {
                         continue;
                     };
 
                     for node in nodes {
-                        let message = if is_initiate {
-                            ToSyncManager::InitiateSync(sync_topic, node)
-                        } else {
-                            ToSyncManager::EndSync(sync_topic, node)
+                        let message = match neighbours {
+                            Neighbours::Up => ToSyncManager::InitiateSync(topic, node),
+                            Neighbours::Down => ToSyncManager::EndSync(topic, node),
                         };
 
                         if myself.send_message(message).is_err() {
@@ -261,7 +239,6 @@ where
             gossip,
             gossip_handles,
             topic_managers: sync_managers,
-            gossip_topics: Arc::default(),
             sync_receivers,
             sync_args,
             hooks,
@@ -595,4 +572,75 @@ where
 /// Hash the concatenation of a topic with a given value to derive new topic.
 fn derive_topic(topic: Topic, value: impl AsRef<[u8]>) -> Topic {
     p2panda_core::Hash::digest([topic.as_bytes(), value.as_ref()].concat()).into()
+}
+
+#[derive(Debug, PartialEq)]
+enum Neighbours {
+    Up,
+    Down,
+}
+
+/// The nodes `event` reports as neighbours gained or lost on `gossip_topic`.
+///
+/// Every topic listens to the events of all of them, so each has to leave the others' alone:
+/// acted on by all, a single neighbour change would end and start the node's sync session once
+/// per subscribed topic.
+fn neighbour_change_on(
+    gossip_topic: Topic,
+    event: GossipEvent,
+) -> Option<(Vec<NodeId>, Neighbours)> {
+    let (topic, nodes, neighbours) = match event {
+        GossipEvent::Joined { topic, nodes } => (topic, Vec::from_iter(nodes), Neighbours::Up),
+        GossipEvent::NeighbourUp { node, topic } => (topic, vec![node], Neighbours::Up),
+        GossipEvent::NeighbourDown { node, topic } => (topic, vec![node], Neighbours::Down),
+        GossipEvent::Left { .. } => return None,
+    };
+    (topic == gossip_topic).then_some((nodes, neighbours))
+}
+
+#[cfg(test)]
+mod tests {
+    use p2panda_core::{SigningKey, Topic};
+
+    use super::{Neighbours, neighbour_change_on};
+    use crate::gossip::GossipEvent;
+
+    #[test]
+    fn a_topic_takes_the_neighbour_changes_of_its_own_overlay() {
+        let topic: Topic = [1; 32].into();
+        let node = SigningKey::generate().verifying_key();
+
+        assert_eq!(
+            neighbour_change_on(topic, GossipEvent::NeighbourUp { node, topic }),
+            Some((vec![node], Neighbours::Up))
+        );
+        assert_eq!(
+            neighbour_change_on(topic, GossipEvent::NeighbourDown { node, topic }),
+            Some((vec![node], Neighbours::Down))
+        );
+    }
+
+    #[test]
+    fn a_topic_leaves_the_neighbour_changes_of_other_overlays_alone() {
+        let topic: Topic = [1; 32].into();
+        let other_topic: Topic = [2; 32].into();
+        let node = SigningKey::generate().verifying_key();
+
+        for event in [
+            GossipEvent::NeighbourUp {
+                node,
+                topic: other_topic,
+            },
+            GossipEvent::NeighbourDown {
+                node,
+                topic: other_topic,
+            },
+            GossipEvent::Joined {
+                topic: other_topic,
+                nodes: [node].into(),
+            },
+        ] {
+            assert_eq!(neighbour_change_on(topic, event), None);
+        }
+    }
 }
