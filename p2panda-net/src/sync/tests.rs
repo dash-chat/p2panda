@@ -102,6 +102,7 @@ enum SyncBehaviour {
     Panic,
     Error,
     Wait,
+    Finish,
 }
 
 #[derive(Debug)]
@@ -126,6 +127,7 @@ impl Protocol for FailingSyncProtocol {
         match self.behaviour {
             SyncBehaviour::Panic => panic!(),
             SyncBehaviour::Error => return Err(SyncError::UnexpectedFailure),
+            SyncBehaviour::Finish => return Ok(()),
             SyncBehaviour::Wait => {
                 while let Some(_) = stream.next().await {}
                 return Err(SyncError::UnexpectedFailure);
@@ -137,6 +139,7 @@ impl Protocol for FailingSyncProtocol {
 #[derive(Clone, Debug)]
 struct FailingSyncArgs {
     pub event_tx: broadcast::Sender<FromSync<DummySyncEvent>>,
+    pub ended_session_tx: broadcast::Sender<u64>,
     pub behaviour: SyncBehaviour,
 }
 
@@ -146,6 +149,7 @@ impl FailingSyncArgs {
         (
             Self {
                 event_tx: tx,
+                ended_session_tx: broadcast::channel(128).0,
                 behaviour,
             },
             rx,
@@ -219,6 +223,10 @@ impl SyncManagerTrait<Topic> for DummySyncManager<FailingSyncArgs, FailingSyncPr
         let (tx, _) = mpsc::channel::<ToSync<Self::Message>>(128);
         let sink = Box::pin(tx) as Pin<Box<dyn Sink<ToSync<Self::Message>, Error = Self::Error>>>;
         Some(sink)
+    }
+
+    fn end_session(&mut self, session_id: u64) {
+        let _ = self.args.ended_session_tx.send(session_id);
     }
 
     fn subscribe(&mut self) -> impl Stream<Item = FromSync<Self::Event>> + Send + Unpin + 'static {
@@ -446,6 +454,41 @@ async fn initiating_again_while_a_session_runs_starts_no_second_one() {
     alice_handle.initiate_session(bob.node_id());
     let second = tokio::time::timeout(Duration::from_secs(2), alice_subscription.next()).await;
     assert!(second.is_err(), "a second session was started: {second:#?}");
+
+    alice.shutdown();
+    bob.shutdown();
+}
+
+#[tokio::test]
+async fn a_session_that_finishes_is_forgotten() {
+    setup_logging();
+
+    let topic = [0; 32].into();
+
+    let (bob_sync_config, _bob_rx) = FailingSyncArgs::new(SyncBehaviour::Finish);
+    let mut bob = FailingNode::spawn(random(), vec![], bob_sync_config).await;
+
+    let (alice_sync_config, _alice_rx) = FailingSyncArgs::new(SyncBehaviour::Finish);
+    let mut ended_sessions = alice_sync_config.ended_session_tx.subscribe();
+    let alice = FailingNode::spawn(random(), vec![bob.args.node_info()], alice_sync_config).await;
+
+    let alice_handle = {
+        let manager_ref = call!(alice.sync_ref, ToSyncManager::Create, topic, true).unwrap();
+        SyncHandle::new(topic, alice.sync_ref.clone(), manager_ref)
+    };
+
+    let _bob_handle = {
+        let manager_ref = call!(bob.sync_ref, ToSyncManager::Create, topic, true).unwrap();
+        SyncHandle::new(topic, bob.sync_ref.clone(), manager_ref)
+    };
+
+    alice_handle.initiate_session(bob.node_id());
+
+    let ended = tokio::time::timeout(Duration::from_secs(5), ended_sessions.recv()).await;
+    assert!(
+        matches!(ended, Ok(Ok(0))),
+        "the manager still holds a session whose protocol finished: {ended:?}"
+    );
 
     alice.shutdown();
     bob.shutdown();

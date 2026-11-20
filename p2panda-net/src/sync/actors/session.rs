@@ -72,7 +72,7 @@ where
 
     async fn handle(
         &self,
-        _myself: ActorRef<Self::Msg>,
+        myself: ActorRef<Self::Msg>,
         message: Self::Msg,
         state: &mut Self::State,
     ) -> Result<(), ActorProcessingErr> {
@@ -134,6 +134,11 @@ where
                 connection.close(VarInt::from_u32(0), b"sync protocol accept completed");
             }
         }
+
+        // A session runs one protocol and is done. Left running, the actor would never tell the
+        // topic manager it ended, which then keeps the session's channels for good.
+        myself.stop(None);
+
         Ok(())
     }
 }
