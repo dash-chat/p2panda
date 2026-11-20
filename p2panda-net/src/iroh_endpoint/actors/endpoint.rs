@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use std::net::{SocketAddrV4, SocketAddrV6};
 use std::sync::Arc;
 
-use iroh::endpoint::{QuicTransportConfig, presets};
+use iroh::endpoint::{BindOpts, QuicTransportConfig, presets};
 use iroh::protocol::DynProtocolHandler;
 use p2panda_core::SigningKey;
 use ractor::thread_local::{ThreadLocalActor, ThreadLocalActorSpawner};
@@ -196,7 +196,12 @@ impl ThreadLocalActor for IrohEndpoint {
                     .transport_config(quic_transport_config)
                     .hooks(state.hooks.clone())
                     .bind_addr(socket_address_v4)?
-                    .bind_addr(socket_address_v6)?
+                    // Hosts without IPv6 (some containers and CI runners) can't open a v6
+                    // socket at all; don't let that fail the whole endpoint.
+                    .bind_addr_with_opts(
+                        socket_address_v6,
+                        BindOpts::default().set_is_required(false),
+                    )?
                     .bind()
                     .await
                     // In the event of failure, this error is not included
