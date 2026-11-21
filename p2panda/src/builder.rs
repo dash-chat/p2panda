@@ -203,6 +203,15 @@ impl NodeBuilder {
         self
     }
 
+    /// Sets whether the node fails to start when its IPv6 socket can't be opened.
+    ///
+    /// Defaults to `true`. Pass `false` to run on hosts without IPv6 (some containers and CI
+    /// runners), where the node then binds with only its IPv4 socket.
+    pub fn require_ipv6(mut self, require: bool) -> Self {
+        self.network_config_mut().iroh.require_ipv6 = require;
+        self
+    }
+
     /// Period of inactivity before a keep-alive packet is sent on a connection.
     pub fn keep_alive_interval(mut self, interval: Duration) -> Self {
         self.network_config_mut().iroh.keep_alive_interval = interval;
