@@ -41,6 +41,8 @@ use crate::streams::{
 
 static_assertions::assert_impl_all!(Node: Send, Sync);
 
+// Only one lives per node, so the size of the online variant doesn't matter.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
 enum NodeNetwork {
     Online(Network),
