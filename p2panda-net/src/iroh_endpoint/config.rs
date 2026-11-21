@@ -23,6 +23,12 @@ pub struct IrohConfig {
     /// will fallback to choosing a random port.
     pub bind_port_v6: u16,
 
+    /// Whether the endpoint fails to bind when the IPv6 socket can't be opened.
+    ///
+    /// Defaults to `true`. Set it to `false` to run on hosts without IPv6 (some containers and
+    /// CI runners): the endpoint then binds with only the IPv4 socket when the IPv6 one fails.
+    pub require_ipv6: bool,
+
     /// Period of inactivity before a keep-alive packet is sent on a connection. Must be
     /// shorter than the idle timeout of both peers to keep an idle connection alive.
     pub keep_alive_interval: Duration,
@@ -38,6 +44,7 @@ impl Default for IrohConfig {
             bind_port_v4: 0,
             bind_ip_v6: Ipv6Addr::UNSPECIFIED,
             bind_port_v6: 0,
+            require_ipv6: true,
             keep_alive_interval: Duration::from_secs(5),
             max_idle_timeout: Duration::from_secs(10),
         }

@@ -196,11 +196,9 @@ impl ThreadLocalActor for IrohEndpoint {
                     .transport_config(quic_transport_config)
                     .hooks(state.hooks.clone())
                     .bind_addr(socket_address_v4)?
-                    // Hosts without IPv6 (some containers and CI runners) can't open a v6
-                    // socket at all; don't let that fail the whole endpoint.
                     .bind_addr_with_opts(
                         socket_address_v6,
-                        BindOpts::default().set_is_required(false),
+                        BindOpts::default().set_is_required(config.require_ipv6),
                     )?
                     .bind()
                     .await

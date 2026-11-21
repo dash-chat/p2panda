@@ -133,6 +133,8 @@ pub fn test_args_from_seed(seed: [u8; 32]) -> ApplicationArguments {
             bind_port_v4: rng.random_range(49152..65535),
             bind_ip_v6: Ipv6Addr::LOCALHOST,
             bind_port_v6: rng.random_range(49152..65535),
+            // Let the tests run on hosts without IPv6.
+            require_ipv6: false,
             ..Default::default()
         })
         .with_rng(rng)
