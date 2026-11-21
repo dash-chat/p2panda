@@ -45,6 +45,7 @@ iroh_mdns = [
 discovery = [
   "address_book",
   "iroh_endpoint",
+  "iroh_mdns",
   "dep:p2panda-discovery",
 ]
 gossip = [
