@@ -42,7 +42,7 @@ pub use pending::{PendingGroup, PendingMember, PendingSpace};
 pub use secrets::{SecretsError, SpaceSecrets};
 pub use space::space_group_id;
 pub use store::SpacesStoreState;
-pub use types::{AuthGroupState, StrongRemoveResolver};
+pub use types::{AuthGroupState, EncryptionDirectMessage, StrongRemoveResolver};
 
 pub type SpaceId = Hash;
 

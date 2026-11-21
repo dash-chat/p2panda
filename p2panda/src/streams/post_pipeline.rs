@@ -113,12 +113,17 @@ where
 }
 
 fn is_spaces_event(event: &Event) -> bool {
-    event.operation.header.extensions.spaces_args().is_some()
+    event.operation.header.extensions.is_space()
 }
 
 /// Extracts the bodies from an event which are meant for the application layer.
 async fn application_messages<'a>(event: &'a Event, store: &SqliteStore) -> Vec<(Event, &'a [u8])> {
     let ProcessorStatus::Completed(SpacesResult::Processed { ref events }) = event.spaces else {
+        // Bodies of spaces operations (for example key bundles) are never forwarded directly.
+        if is_spaces_event(event) {
+            return vec![];
+        }
+
         return event
             .body()
             .map(|body| (event.clone(), body.as_bytes()))
@@ -435,7 +440,7 @@ mod tests {
                     Some(self.topic),
                     log_id,
                     body,
-                    Builder::new(log_id).build_space(spaces_args.clone()),
+                    Builder::new(log_id).build_space(spaces_args.clone().into()),
                 )
                 .await
                 .unwrap();

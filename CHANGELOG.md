@@ -9,6 +9,27 @@ Highlights are marked with a pancake 🥞
 
 ## Unreleased
 
+Note: PR [#1614](https://github.com/p2panda/p2panda/pull/1614) introduces
+breaking changes to the API of `p2panda-net`:
+ - `p2panda_net::gossip::HyparviewConfig` -> `p2panda_net::gossip::MembershipConfig`
+ - `p2panda_net::gossip::PlumtreeConfig` -> `p2panda_net::gossip::BroadcastConfig`
+
+### Changed
+
+- net: Update iroh to v1.5.0 [#1614](https://github.com/p2panda/p2panda/pull/1614)
+
+### Added
+
+- node: Define `EventDelivery` traits and types [#1608](https://github.com/p2panda/p2panda/pull/1608)
+
+## [0.8.1] - 13/11/2026
+
+### Changed
+
+- node: Remove hard-coded SQLite max and min connection defaults for in-memory use [#1581](https://github.com/p2panda/p2panda/pull/1581)
+- spaces: Rename `SpaceMembership` -> `KeyAgreement` control message [#1596](https://github.com/p2panda/p2panda/pull/1596)
+- node: Move ciphertext and key bundle into operation body [#1596](https://github.com/p2panda/p2panda/pull/1596)
+
 ### Fixed
 
 - sync: Drop the session that has no sender instead of the sending session [#1593](https://github.com/p2panda/p2panda/pull/1593)
@@ -431,7 +452,8 @@ Highlights are marked with a pancake 🥞
 
 Version `v0.1.0` represents the first release of the new p2panda stack! You can find out more details by reading our [blog](https://p2panda.org/2024/12/06/p2panda-release.html).
 
-[unreleased]: https://github.com/p2panda/p2panda/compare/v0.8.0...HEAD
+[unreleased]: https://github.com/p2panda/p2panda/compare/v0.8.1...HEAD
+[0.8.1]: https://github.com/p2panda/p2panda/releases/tag/v0.8.1
 [0.8.0]: https://github.com/p2panda/p2panda/releases/tag/v0.8.0
 [0.7.1]: https://github.com/p2panda/p2panda/releases/tag/v0.7.1
 [0.7.0]: https://github.com/p2panda/p2panda/releases/tag/v0.6.1

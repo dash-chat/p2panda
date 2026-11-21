@@ -3,22 +3,15 @@ all-features = true
 
 [advisories]
 ignore = [
-    # FIXME: <https://github.com/p2panda/p2panda/issues/1577>.
-    {
-      id = "RUSTSEC-2026-0459",
-      reason = "Blocked by sqlx crate release",
-    },
-
-    # paste is not maintained anymore - used by netlink-packet-core > .. > netwatch .. > iroh.
-    # https://github.com/rust-netlink/netlink-packet-core/issues/41
-    {
-      id = "RUSTSEC-2024-0436",
-      reason = "Advisory is notice / INFO",
-    },
-
     # proc-macro-error2 is not maintained anymore, used by hax-lib-macros > .. > hpke-rs.
     {
       id = "RUSTSEC-2026-0173",
+      reason = "Advisory is notice / INFO",
+    },
+    
+    # chrono is not maintained anymore, used by wmi > network > iroh > iroh-gossip.
+    {
+      id = "RUSTSEC-2026-0543",
       reason = "Advisory is notice / INFO",
     },
 ]
