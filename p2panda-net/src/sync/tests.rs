@@ -264,3 +264,58 @@ async fn failed_sync_session_retry() {
         bob.shutdown();
     }
 }
+
+#[tokio::test]
+async fn failed_sync_session_retries_back_off() {
+    setup_logging();
+
+    let topic = [0; 32].into();
+
+    let mut bob = FailingNode::spawn(
+        random(),
+        vec![],
+        FailingSessionBuilder::new(SyncBehaviour::Error),
+    )
+    .await;
+    let alice = FailingNode::spawn(
+        random(),
+        vec![bob.args.node_info()],
+        FailingSessionBuilder::new(SyncBehaviour::Error),
+    )
+    .await;
+
+    let alice_handle = {
+        let manager_ref = call!(alice.sync_ref, ToSyncManager::Create, topic, true).unwrap();
+        SyncHandle::new(topic, alice.sync_ref.clone(), manager_ref)
+    };
+    let mut alice_subscription = alice_handle.subscribe().await.unwrap();
+
+    let _bob_handle = {
+        let manager_ref = call!(bob.sync_ref, ToSyncManager::Create, topic, true).unwrap();
+        SyncHandle::new(topic, bob.sync_ref.clone(), manager_ref)
+    };
+
+    alice_handle.initiate_session(bob.node_id());
+
+    // Every session with Bob fails, so each one after the first is a retry.
+    let mut sessions_created_at = Vec::new();
+    while sessions_created_at.len() < 4 {
+        if let Ok(FromSync {
+            remote,
+            event: DummySyncEvent::SessionCreated,
+            ..
+        }) = alice_subscription.next().await.unwrap()
+            && remote == bob.node_id()
+        {
+            sessions_created_at.push(std::time::Instant::now());
+        }
+    }
+    let gaps: Vec<Duration> = sessions_created_at
+        .windows(2)
+        .map(|pair| pair[1] - pair[0])
+        .collect();
+    assert!(gaps[2] > gaps[0] * 3, "retries did not back off: {gaps:?}");
+
+    alice.shutdown();
+    bob.shutdown();
+}
