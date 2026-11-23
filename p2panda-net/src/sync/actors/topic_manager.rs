@@ -32,6 +32,11 @@ use crate::{NodeId, ProtocolId};
 
 const RETRY_RATE: Duration = Duration::from_secs(5);
 
+/// Each failed session with a node doubles the wait before retrying it, up to this. A node that
+/// went away for good would otherwise be dialled every few seconds on every topic we share with
+/// it, and with enough of them that crowds out the nodes we can actually reach.
+const MAX_RETRY_DELAY: Duration = Duration::from_secs(5 * 60);
+
 /// Capacity of each session's channel for payloads to send to the remote in live mode.
 const LIVE_BUFFER: usize = 1024;
 
@@ -89,6 +94,9 @@ where
     ///
     /// If a sync session fails with one of these nodes we will attempt a retry.
     active_sync_set: HashSet<NodeId>,
+
+    /// Wait before the next retry with each node whose last session failed.
+    retry_delays: HashMap<NodeId, Duration>,
 
     /// Session run by each session actor, until the actor has stopped.
     sessions: HashMap<ActorId, SessionInfo>,
@@ -161,6 +169,7 @@ where
             session_builder,
             protocol_id,
             active_sync_set: HashSet::new(),
+            retry_delays: HashMap::new(),
             sessions: HashMap::new(),
             next_session_id: 0,
             endpoint,
@@ -251,6 +260,9 @@ where
                     "accept sync session"
                 );
 
+                // It reached us, so it is there to be reached.
+                state.retry_delays.remove(&node_id);
+
                 let (actor_ref, live_rx) =
                     Self::spawn_session(&myself, state, &node_id, live_mode).await?;
 
@@ -332,6 +344,7 @@ where
             SupervisionEvent::ActorTerminated(actor_cell, _, _) => {
                 if let Some(info) = state.sessions.remove(&actor_cell.get_id()) {
                     state.live_sessions.close(info.session_id).await;
+                    state.retry_delays.remove(&info.remote);
 
                     debug!(
                         session_id = info.session_id,
@@ -361,9 +374,15 @@ where
                         return Ok(());
                     };
 
-                    // Send a retry message to the actor after a 5 second delay, in the same mode as
-                    // the failed session.
-                    myself.send_after(RETRY_RATE, move || ToTopicManager::Retry {
+                    let delay = state
+                        .retry_delays
+                        .get(&info.remote)
+                        .map_or(RETRY_RATE, |delay| (*delay * 2).min(MAX_RETRY_DELAY));
+                    state.retry_delays.insert(info.remote, delay);
+
+                    // Send a retry message to the actor after the delay, in the same mode as the
+                    // failed session.
+                    myself.send_after(delay, move || ToTopicManager::Retry {
                         node_id: info.remote,
                         live_mode: info.live_mode,
                     });
