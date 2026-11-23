@@ -204,8 +204,11 @@ where
 
             let post_pipeline_hook = Hooks::<Event<L, E, TP>>::from_list(post_hooks);
 
+            // The orderer recurses once per pending item a new item releases, so a
+            // long catch-up backlog overruns the default 2 MiB thread stack.
             thread::Builder::new()
                 .name(format!("pipeline-{}", pipeline_id.fmt_short()))
+                .stack_size(16 * 1024 * 1024)
                 .spawn(move || {
                     let local = LocalSet::new();
 
