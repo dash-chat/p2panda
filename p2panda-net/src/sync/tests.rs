@@ -319,3 +319,123 @@ async fn failed_sync_session_retries_back_off() {
     alice.shutdown();
     bob.shutdown();
 }
+
+#[tokio::test]
+async fn initiating_again_while_a_session_runs_starts_no_second_one() {
+    setup_logging();
+
+    let topic = [0; 32].into();
+
+    let mut bob = FailingNode::spawn(
+        random(),
+        vec![],
+        FailingSessionBuilder::new(SyncBehaviour::Wait),
+    )
+    .await;
+    let alice = FailingNode::spawn(
+        random(),
+        vec![bob.args.node_info()],
+        FailingSessionBuilder::new(SyncBehaviour::Wait),
+    )
+    .await;
+
+    let alice_handle = {
+        let manager_ref = call!(alice.sync_ref, ToSyncManager::Create, topic, true).unwrap();
+        SyncHandle::new(topic, alice.sync_ref.clone(), manager_ref)
+    };
+    let mut alice_subscription = alice_handle.subscribe().await.unwrap();
+
+    let _bob_handle = {
+        let manager_ref = call!(bob.sync_ref, ToSyncManager::Create, topic, true).unwrap();
+        SyncHandle::new(topic, bob.sync_ref.clone(), manager_ref)
+    };
+
+    // Both sides wait on each other, so the first session keeps running.
+    alice_handle.initiate_session(bob.node_id());
+    let first = alice_subscription.next().await.unwrap();
+    assert!(
+        matches!(
+            first,
+            Ok(FromSync {
+                event: DummySyncEvent::SessionCreated,
+                ..
+            })
+        ),
+        "{first:#?}"
+    );
+    tokio::time::sleep(Duration::from_secs(1)).await;
+
+    alice_handle.initiate_session(bob.node_id());
+    let second = tokio::time::timeout(Duration::from_secs(2), alice_subscription.next()).await;
+    assert!(second.is_err(), "a second session was started: {second:#?}");
+
+    alice.shutdown();
+    bob.shutdown();
+}
+
+#[tokio::test]
+async fn initiating_after_ending_sync_starts_a_new_session() {
+    setup_logging();
+
+    let topic = [0; 32].into();
+
+    let mut bob = FailingNode::spawn(
+        random(),
+        vec![],
+        FailingSessionBuilder::new(SyncBehaviour::Wait),
+    )
+    .await;
+    let alice = FailingNode::spawn(
+        random(),
+        vec![bob.args.node_info()],
+        FailingSessionBuilder::new(SyncBehaviour::Wait),
+    )
+    .await;
+
+    let alice_handle = {
+        let manager_ref = call!(alice.sync_ref, ToSyncManager::Create, topic, true).unwrap();
+        SyncHandle::new(topic, alice.sync_ref.clone(), manager_ref)
+    };
+    let mut alice_subscription = alice_handle.subscribe().await.unwrap();
+
+    let _bob_handle = {
+        let manager_ref = call!(bob.sync_ref, ToSyncManager::Create, topic, true).unwrap();
+        SyncHandle::new(topic, bob.sync_ref.clone(), manager_ref)
+    };
+
+    alice_handle.initiate_session(bob.node_id());
+    let first = alice_subscription.next().await.unwrap();
+    assert!(
+        matches!(
+            first,
+            Ok(FromSync {
+                event: DummySyncEvent::SessionCreated,
+                ..
+            })
+        ),
+        "{first:#?}"
+    );
+
+    // As when the overlay reports Bob gone: the session is told to close, but over a connection
+    // that went away with the network it never gets to, so it keeps running.
+    alice
+        .sync_ref
+        .send_message(ToSyncManager::EndSync(topic, bob.node_id()))
+        .unwrap();
+
+    alice_handle.initiate_session(bob.node_id());
+    let second = tokio::time::timeout(Duration::from_secs(2), alice_subscription.next()).await;
+    assert!(
+        matches!(
+            second,
+            Ok(Some(Ok(FromSync {
+                event: DummySyncEvent::SessionCreated,
+                ..
+            })))
+        ),
+        "no new session after ending sync: {second:#?}"
+    );
+
+    alice.shutdown();
+    bob.shutdown();
+}
