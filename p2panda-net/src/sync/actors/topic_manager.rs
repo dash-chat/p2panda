@@ -201,6 +201,17 @@ where
 
                 state.active_sync_set.insert(node_id);
 
+                // Every re-join of the overlay reports its neighbours again, all at once, and a node
+                // we already have a session with needs no second one.
+                if state.sessions.values().any(|info| info.remote == node_id) {
+                    debug!(
+                        remote = %node_id.fmt_short(),
+                        topic = %topic.fmt_short(),
+                        "skip initiate sync: a sync session is already running"
+                    );
+                    return Ok(());
+                }
+
                 let (actor_ref, live_rx) =
                     Self::spawn_session(&myself, state, &node_id, live_mode).await?;
 
