@@ -337,6 +337,11 @@ where
                     }
                 }
 
+                // Forgotten here rather than once they end: a session whose connection went away
+                // with the network never gets the close, and would otherwise count as running and
+                // stop a fresh one from starting when the node comes back.
+                state.sessions.retain(|_, info| info.remote != node_id);
+
                 let _ = reply.send(());
             }
         }
