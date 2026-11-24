@@ -587,8 +587,30 @@ where
             HashSet::from_iter(message.proof.clone()),
         )?;
 
-        // Process encryption message.
         let encryption_message = EncryptionMessage::from_application(message);
+
+        // An application message can legitimately arrive without its ciphertext: the body lives
+        // off-chain and was deleted by its author, or the transport delivered the header alone.
+        // There is nothing to decrypt, and handing it to the encryption group would fail there
+        // (and, queued before our welcome, fail the welcome with it). We only record it in the
+        // dependency graph and emit no event.
+        //
+        // TODO: A body which was only missing in transit can still turn up later. We need a way to
+        // loop back around then: attach the body to the operation and process this message again
+        // so the application finally receives it.
+        if message.ciphertext.is_empty() {
+            debug!(
+                id = %encryption_message.id(),
+                "skip application message without ciphertext"
+            );
+            space_y
+                .encryption_y
+                .orderer
+                .add_dependency(encryption_message.id(), &message.space_dependencies);
+            return Ok((space_y, vec![]));
+        }
+
+        // Process encryption message.
         let (encryption_y, encryption_output) =
             EncryptionGroup::receive(space_y.encryption_y, &encryption_message)?;
 
