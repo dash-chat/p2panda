@@ -390,8 +390,13 @@ impl Node {
             NodeNetwork::Offline { .. } => None,
         };
 
-        let pipeline = Pipeline::new(
+        // The orderer keeps its state under the cursor's name, so streams which track their own
+        // cursor on a shared store also keep their own orderer state.
+        let cursor_name = custom_cursor_name.unwrap_or_else(|| topic.to_string());
+
+        let pipeline = Pipeline::with_orderer_namespace(
             topic,
+            cursor_name.clone(),
             self.store.clone(),
             self.tasks.clone(),
             self.spaces_manager.clone(),
@@ -409,7 +414,7 @@ impl Node {
             pipeline,
             self.events_tx.clone(),
             from,
-            custom_cursor_name,
+            cursor_name,
         )
         .await
         .map_err(|err| CreateStreamError(err.to_string()))?;
@@ -638,14 +643,18 @@ impl Node {
     where
         M: Serialize + for<'a> Deserialize<'a> + Send + 'static,
     {
-        self.space_from(space_id, StreamFrom::Frontier).await
+        self.space_from(space_id, StreamFrom::Frontier, None).await
     }
 
     /// Subscribe to an existing space and stream events starting from a given point.
+    ///
+    /// As with [`Node::stream_from`], a custom cursor name lets several nodes sharing one store
+    /// subscribe to the same space, each tracking its own position and orderer state.
     pub async fn space_from<M>(
         &self,
         space_id: impl Into<SpaceId>,
         from: StreamFrom,
+        custom_cursor_name: Option<String>,
     ) -> Result<(PendingSpace<M>, SpaceSubscription<M>), SubscribeSpaceError>
     where
         M: Serialize + for<'a> Deserialize<'a> + Send + 'static,
@@ -678,7 +687,9 @@ impl Node {
                 .await;
         }
 
-        let (tx, rx) = self.space_stream_from_inner(space_id, from).await?;
+        let (tx, rx) = self
+            .space_stream_from_inner(space_id, from, custom_cursor_name)
+            .await?;
 
         let egress_handle = self.egress.handle();
 
@@ -703,6 +714,7 @@ impl Node {
         &self,
         topic: impl Into<Topic>,
         from: StreamFrom,
+        custom_cursor_name: Option<String>,
     ) -> Result<(StreamPublisher<M>, StreamSubscription<M>), CreateStreamError>
     where
         M: Serialize + for<'a> Deserialize<'a> + Send + 'static,
@@ -713,8 +725,14 @@ impl Node {
         post_pipeline.push(SyncAuthoriserHook::new(self.sync_block_list.clone()));
         post_pipeline.push(RepairHook::new(self.repair_task.clone()));
 
-        self.stream_from_inner(topic, from, StreamType::Space, post_pipeline, None)
-            .await
+        self.stream_from_inner(
+            topic,
+            from,
+            StreamType::Space,
+            post_pipeline,
+            custom_cursor_name,
+        )
+        .await
     }
 
     /// Create a new space.
@@ -756,7 +774,7 @@ impl Node {
 
         // Establish a topic stream using the space id as a topic.
         let (tx, rx) = self
-            .space_stream_from_inner(space_id, StreamFrom::Frontier)
+            .space_stream_from_inner(space_id, StreamFrom::Frontier, None)
             .await?;
 
         // Create a space.

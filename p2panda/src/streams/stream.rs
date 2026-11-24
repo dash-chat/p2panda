@@ -111,15 +111,12 @@ pub(crate) async fn processed_stream<M>(
     pipeline: Pipeline,
     event_tx: broadcast::Sender<SystemEvent>,
     from: StreamFrom,
-    custom_cursor_name: Option<String>,
+    cursor_name: String,
 ) -> Result<(StreamPublisher<M>, StreamSubscription<M>), CreateStreamError>
 where
     M: Serialize + for<'a> Deserialize<'a> + Send + 'static,
 {
-    let acked = match custom_cursor_name {
-        Some(cursor_name) => Acked::from_name(store.clone(), topic, cursor_name),
-        None => Acked::new(store.clone(), topic),
-    };
+    let acked = Acked::from_name(store.clone(), topic, &cursor_name);
 
     // Sync handle is used on the publisher and when importing from external streams. An offline
     // node has no sync handle.
@@ -272,7 +269,7 @@ where
 
                 // Before a replay we need to reset the orderer by removing all operations we want
                 // to replay before, otherwise the orderer will not respect their causal ordering.
-                let namespace = topic.to_string(); // Needs to match orderer namespace given in pipeline.
+                let namespace = cursor_name; // Needs to match orderer namespace given in pipeline.
                 let reset_result =
                     reset_orderer(&store, &from, &namespace, nacked_log_ranges.clone()).await;
 
