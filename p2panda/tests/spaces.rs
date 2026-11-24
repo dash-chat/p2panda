@@ -589,7 +589,7 @@ mod spaces_api {
         drop(penguin_rx);
 
         let (_penguin_space, mut penguin_rx) = penguin
-            .space_from::<String>(topic, StreamFrom::Start)
+            .space_from::<String>(topic, StreamFrom::Start, None)
             .await
             .unwrap();
 
@@ -1736,7 +1736,7 @@ mod database {
         // processes each operation in the pipeline. This would block if the above described
         // connection issue was present.
         let (_space, mut panda_rx) = panda
-            .space_from::<SecretData>(topic, StreamFrom::Start)
+            .space_from::<SecretData>(topic, StreamFrom::Start, None)
             .await
             .unwrap();
 
