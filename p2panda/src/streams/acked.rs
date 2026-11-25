@@ -100,7 +100,7 @@ impl Acked {
                     //
                     // 1. Replace the cursor
                     // 2. Calculate nacked log range
-                    // 3. Reset orderer state
+                    // 3. Order the operations causally
                     // 4. Replay operations
                     self.replace_cursor(Cursor::new(&self.cursor_name, LogHeights::default()))
                         .await?

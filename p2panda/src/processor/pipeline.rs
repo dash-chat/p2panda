@@ -172,36 +172,8 @@ where
     ///
     /// Users can run multiple pipelines parallely, a common task manager instance makes sure that
     /// processors do not work on the same event at the same time.
-    ///
-    /// The orderer keeps its state under the pipeline id.
     pub fn new(
         id: impl Into<Hash>,
-        store: SqliteStore,
-        tasks: TaskTracker<Event<L, E, TP>, PipelineTaskId>,
-        spaces_manager: SpacesManager,
-        egress_handle: EgressHandle,
-        post_hooks: ProcessorHooksList<Event<L, E, TP>>,
-    ) -> Self {
-        let pipeline_id = id.into();
-        Self::with_orderer_namespace(
-            pipeline_id,
-            pipeline_id.to_string(),
-            store,
-            tasks,
-            spaces_manager,
-            egress_handle,
-            post_hooks,
-        )
-    }
-
-    /// Creates a new "event processor" pipeline whose orderer keeps its state under
-    /// `orderer_namespace`.
-    ///
-    /// Nodes sharing a store must not share an orderer namespace: each one resets and releases
-    /// the orderer state it finds under its namespace.
-    pub fn with_orderer_namespace(
-        id: impl Into<Hash>,
-        orderer_namespace: String,
         store: SqliteStore,
         tasks: TaskTracker<Event<L, E, TP>, PipelineTaskId>,
         spaces_manager: SpacesManager,
@@ -248,7 +220,7 @@ where
                             Ingest::<SqliteStore, Event<L, E, TP>, L, E, TP>::new(store.clone());
                         let orderer = Orderer::<SqliteStore, Event<L, E, TP>, E>::from_namespace(
                             store.clone(),
-                            orderer_namespace,
+                            pipeline_id.to_string(),
                         );
                         let log_prune =
                             LogPrune::<SqliteStore, Event<L, E, TP>, L>::new(store.clone());

@@ -1,17 +1,18 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
+use std::collections::HashMap;
+
 use futures_util::StreamExt;
 use p2panda_core::logs::LogRanges;
 use p2panda_core::{Cursor, Hash, Topic, VerifyingKey};
-use p2panda_store::orderer::OrdererStore;
-use p2panda_store::{SqliteError, SqliteStore, tx};
+use p2panda_store::{SqliteError, SqliteStore};
 use p2panda_sync::api::{LogEntry, log_ranges};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::sync::mpsc;
 use tracing::debug;
 
-use crate::operation::{Extensions, LogId};
+use crate::operation::{Extensions, LogId, Operation};
 use crate::processor::Pipeline;
 use crate::streams::stream::{Source, process_operation_in};
 use crate::streams::{ForwardEvent, StreamEvent};
@@ -43,37 +44,6 @@ impl From<Cursor<VerifyingKey, LogId>> for StreamFrom {
     }
 }
 
-/// Reset orderer from given point on.
-pub(crate) async fn reset_orderer(
-    store: &SqliteStore,
-    from: &StreamFrom,
-    namespace: &str,
-    ranges: LogRanges<VerifyingKey, LogId>,
-) -> Result<(), SqliteError> {
-    match from {
-        StreamFrom::Start => {
-            tx!(store, {
-                <SqliteStore as OrdererStore<Hash>>::clear_tx(store, namespace).await?;
-            });
-        }
-        StreamFrom::Frontier | StreamFrom::Cursor(_) => {
-            let mut operations = log_ranges(store, ranges);
-            let mut ids = Vec::new();
-
-            while let Some(result) = operations.next().await {
-                let row = result?;
-                ids.push(row.entry.header.hash());
-            }
-
-            tx!(store, {
-                store.clear_keys_tx(namespace, &ids).await?;
-            });
-        }
-    }
-
-    Ok(())
-}
-
 /// Re-play and re-process locally stored operations.
 pub(crate) async fn replay_log_ranges<M>(
     topic: Topic,
@@ -98,24 +68,21 @@ where
         .await
         .map_err(|_| ReplayError::CriticalError)?;
 
-    let mut operations = log_ranges(store, ranges);
-
-    while let Some(result) = operations.next().await {
+    let mut entries = log_ranges(store, ranges);
+    let mut operations = Vec::new();
+    while let Some(result) = entries.next().await {
         let LogEntry {
             entry: operation, ..
         } = result?;
-
-        process_operation_in(
+        operations.push(
             operation
                 .try_into()
                 .expect("operations from database have already validated extensions"),
-            Source::Replay,
-            topic,
-            pipeline,
-            None,
-            None,
-        )
-        .await;
+        );
+    }
+
+    for operation in causal_order(operations) {
+        process_operation_in(operation, Source::Replay, topic, pipeline, None, None).await;
     }
 
     to_output_tx
@@ -126,6 +93,74 @@ where
     debug!("finished replaying {total_operations} operations");
 
     Ok(())
+}
+
+/// `operations` reordered so that each one comes after the ones among them it depends on,
+/// otherwise keeping their order.
+///
+/// Replayed operations come out of the store log by log, and the orderer may have marked all of
+/// them ready already (they are unacknowledged, not unprocessed), in which case it forwards them
+/// in the order they arrive. Its state is shared by every stream on the topic, so the replay
+/// orders them itself instead of resetting it. Dependencies outside `operations` are left to the
+/// orderer.
+fn causal_order(operations: Vec<Operation>) -> Vec<Operation> {
+    let index: HashMap<Hash, usize> = operations
+        .iter()
+        .enumerate()
+        .map(|(i, operation)| (operation.hash, i))
+        .collect();
+    let dependencies: Vec<Vec<usize>> = operations
+        .iter()
+        .map(|operation| {
+            operation
+                .header
+                .extensions
+                .spaces_args(operation.body.as_ref())
+                .map(|args| args.dependencies())
+                .unwrap_or_default()
+                .iter()
+                .filter_map(|hash| index.get(hash).copied())
+                .collect()
+        })
+        .collect();
+
+    // Depth-first, with an explicit stack: a dependency chain can be as long as the replay.
+    let mut state = vec![Visit::New; operations.len()];
+    let mut order = Vec::with_capacity(operations.len());
+    for root in 0..operations.len() {
+        let mut stack = vec![(root, 0)];
+        while let Some((i, next)) = stack.pop() {
+            if state[i] == Visit::Placed {
+                continue;
+            }
+            state[i] = Visit::OnStack;
+            match dependencies[i].get(next) {
+                Some(&dependency) => {
+                    stack.push((i, next + 1));
+                    if state[dependency] == Visit::New {
+                        stack.push((dependency, 0));
+                    }
+                }
+                None => {
+                    state[i] = Visit::Placed;
+                    order.push(i);
+                }
+            }
+        }
+    }
+
+    let mut operations: Vec<Option<Operation>> = operations.into_iter().map(Some).collect();
+    order
+        .into_iter()
+        .map(|i| operations[i].take().expect("each operation is placed once"))
+        .collect()
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Visit {
+    New,
+    OnStack,
+    Placed,
 }
 
 /// Returns the number of all operations in the given log ranges.
