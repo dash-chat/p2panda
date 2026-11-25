@@ -390,13 +390,10 @@ impl Node {
             NodeNetwork::Offline { .. } => None,
         };
 
-        // The orderer keeps its state under the cursor's name, so streams which track their own
-        // cursor on a shared store also keep their own orderer state.
         let cursor_name = custom_cursor_name.unwrap_or_else(|| topic.to_string());
 
-        let pipeline = Pipeline::with_orderer_namespace(
+        let pipeline = Pipeline::new(
             topic,
-            cursor_name.clone(),
             self.store.clone(),
             self.tasks.clone(),
             self.spaces_manager.clone(),
@@ -649,7 +646,7 @@ impl Node {
     /// Subscribe to an existing space and stream events starting from a given point.
     ///
     /// As with [`Node::stream_from`], a custom cursor name lets several nodes sharing one store
-    /// subscribe to the same space, each tracking its own position and orderer state.
+    /// subscribe to the same space, each tracking its own position.
     pub async fn space_from<M>(
         &self,
         space_id: impl Into<SpaceId>,

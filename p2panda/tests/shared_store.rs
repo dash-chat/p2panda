@@ -3,18 +3,17 @@
 //! Two nodes on one store, as an app and its push notification extension run on iOS: same
 //! credentials, same database, both subscribed to the same space under their own cursor.
 //!
-//! Opening a stream resets the orderer state of every operation past its cursor and replays them.
-//! If that state were shared between the nodes, the second node's reset would wipe the first
-//! node's record that its latest message was processed, the first node would park its next
-//! message on that dependency, and the second node's replay would release it into the second
-//! node's pipeline instead: the first node would never process its own message.
+//! What each node has acknowledged is its own, but what has been processed is a fact about the
+//! store: the orderer state is shared by both nodes, and opening a stream must not reset it.
 
 use std::path::PathBuf;
 use std::time::Duration;
 
 use p2panda::node::AckPolicy;
-use p2panda::streams::StreamEvent;
+use p2panda::operation::Operation;
+use p2panda::streams::{StreamEvent, StreamFrom};
 use p2panda::{Credentials, Hash, Node, Topic};
+use p2panda_store::operations::OperationStore;
 use tokio::sync::{mpsc, oneshot};
 use tokio_stream::StreamExt;
 
@@ -94,6 +93,10 @@ impl Drop for TempDatabase {
     }
 }
 
+/// The second node opening the space while the first one still has unacknowledged messages
+/// replays them, which must not undo the first node's record that it processed them: it would
+/// park its next message on them, and the second node's replay would release it into the second
+/// node's pipeline instead.
 #[tokio::test]
 async fn nodes_on_one_store_each_process_their_own_space_messages() {
     let database = TempDatabase::new();
@@ -121,7 +124,7 @@ async fn nodes_on_one_store_each_process_their_own_space_messages() {
     let (_pending, extension_subscription) = extension
         .space_from::<String>(
             space.id(),
-            p2panda::streams::StreamFrom::Frontier,
+            StreamFrom::Frontier,
             Some("extension".to_string()),
         )
         .await
@@ -137,5 +140,57 @@ async fn nodes_on_one_store_each_process_their_own_space_messages() {
     assert!(
         processed(&mut app_processed, hash).await,
         "the first node never processed its own message"
+    );
+}
+
+/// A message the second node receives depends on one only the first node processed, as when the
+/// extension is woken for a message that follows ones the app handled itself.
+#[tokio::test]
+async fn a_node_processes_a_message_following_ones_the_other_node_processed() {
+    let database = TempDatabase::new();
+    let credentials = Credentials::generate();
+
+    let app = spawn_node(&credentials, &database.url()).await;
+    let (space, app_subscription) = app
+        .create_space_with_id::<String>(Topic::random())
+        .await
+        .unwrap();
+    let (_app_processed, _) = watch(app_subscription);
+
+    let extension = spawn_node(&credentials, &database.url()).await;
+    let (extension_space, extension_subscription) = extension
+        .space_from::<String>(
+            space.id(),
+            StreamFrom::Frontier,
+            Some("extension".to_string()),
+        )
+        .await
+        .unwrap();
+    let (mut extension_processed, _) = watch(extension_subscription);
+
+    space
+        .publish("handled by the app".to_string())
+        .await
+        .unwrap()
+        .await
+        .unwrap();
+    let next = space.publish("the next message".to_string()).await.unwrap();
+    let hash = next.hash();
+    next.await.unwrap();
+
+    // As a mailbox hands the extension what is already in the store.
+    let operation = <_ as OperationStore<Operation, Hash>>::get_operation(&app.store(), &hash)
+        .await
+        .unwrap()
+        .unwrap();
+    extension_space
+        .publisher()
+        .import(futures_util::stream::iter([operation]))
+        .await
+        .unwrap();
+
+    assert!(
+        processed(&mut extension_processed, hash).await,
+        "the second node never processed the message"
     );
 }

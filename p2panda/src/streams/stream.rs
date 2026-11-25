@@ -39,7 +39,7 @@ use crate::streams::external_stream::{
 };
 use crate::streams::process_operation_out;
 use crate::streams::publisher::StreamPublisher;
-use crate::streams::replay::{ReplayError, StreamFrom, replay_log_ranges, reset_orderer};
+use crate::streams::replay::{ReplayError, StreamFrom, replay_log_ranges};
 use crate::streams::subscription::StreamSubscription;
 use crate::streams::sync_metrics::{self, Aggregator, SessionPhase, SyncError};
 use crate::streams::{Event, Pipeline, SystemEvent};
@@ -267,54 +267,27 @@ where
                 // TODO: This replay logic should be factored out into an own module.
                 // See related issue: <https://github.com/p2panda/p2panda/issues/1443>
 
-                // Before a replay we need to reset the orderer by removing all operations we want
-                // to replay before, otherwise the orderer will not respect their causal ordering.
-                let namespace = cursor_name; // Needs to match orderer namespace given in pipeline.
-                let reset_result =
-                    reset_orderer(&store, &from, &namespace, nacked_log_ranges.clone()).await;
+                // This will block processing of the sync stream and of locally created operations
+                // until it is complete.
+                let replay_result =
+                    replay_log_ranges(topic, &store, &to_output_tx, &pipeline, nacked_log_ranges)
+                        .await;
 
-                if let Err(error) = reset_result {
+                // Errors occurring in the replay task which be returned to the user.
+                if let Err(error) = replay_result {
                     warn!(
                         topic = %topic.fmt_short(),
-                        "error occurred in replay task when resetting orderer: {error}"
+                        "error occurred in replay task: {error}"
                     );
 
                     let _ = to_output_tx
                         .send(vec![
                             StreamEvent::ReplayFailed {
-                                error: Arc::new(error.into()),
+                                error: Arc::new(error),
                             }
                             .into(),
                         ])
                         .await;
-                } else {
-                    // This will block processing of the sync stream and of locally created
-                    // operations until it is complete.
-                    let replay_result = replay_log_ranges(
-                        topic,
-                        &store,
-                        &to_output_tx,
-                        &pipeline,
-                        nacked_log_ranges,
-                    )
-                    .await;
-
-                    // Errors occurring in the replay task which be returned to the user.
-                    if let Err(error) = replay_result {
-                        warn!(
-                            topic = %topic.fmt_short(),
-                            "error occurred in replay task: {error}"
-                        );
-
-                        let _ = to_output_tx
-                            .send(vec![
-                                StreamEvent::ReplayFailed {
-                                    error: Arc::new(error),
-                                }
-                                .into(),
-                            ])
-                            .await;
-                    }
                 }
             }
 
