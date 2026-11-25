@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use crate::egress::StreamType;
 use crate::node::AckPolicy;
+use crate::operation::{ExtensionsVariantV1, SpacesHeaderArgs};
 use crate::processor::ProcessorStatus;
 use crate::spaces::types::AuthCapabilities;
 use crate::streams::acked::Acked;
@@ -26,7 +27,8 @@ use tracing::{debug, warn};
 /// 1. If we forward any processed operation / non-error result to frontend, ack it if policy is set
 ///    to automatic.
 /// 2. Always ack events if never forwarded to frontend.
-/// 3. What we don't forward: pruning operations without body.
+/// 3. What we don't forward: pruning operations without body, and spaces control messages which
+///    yielded no event.
 pub(crate) async fn process_operation_out<M>(
     event: Event,
     topic: Topic,
@@ -98,15 +100,23 @@ where
     //
     // Processing of a spaces event may yield multiple events to be forwarded to the user, while
     // processing any other event will only yield a single user event.
+    let forwarded_before = forward_events.len();
     match stream_type {
         StreamType::Topic => (),
         StreamType::Group => process_groups_events(&event, &mut forward_events),
         StreamType::Space => process_spaces_events(&event, &mut forward_events),
     };
+    let forwarded_system_events = forward_events.len() > forwarded_before;
 
-    // Spaces events are forwarded to the application layer.
     if is_spaces_event(&event) {
-        ack_if_automatic(&event, ack_policy, acked, &mut forward_events).await;
+        if is_spaces_control_event(&event) && !forwarded_system_events {
+            // A control message which yielded nothing for the application layer can't be
+            // acked by it.
+            always_ack(&event, acked, &mut forward_events).await;
+        } else {
+            // Spaces events are forwarded to the application layer.
+            ack_if_automatic(&event, ack_policy, acked, &mut forward_events).await;
+        }
     }
 
     forward_events
@@ -114,6 +124,16 @@ where
 
 fn is_spaces_event(event: &Event) -> bool {
     event.operation.header.extensions.is_space()
+}
+
+/// Whether the event is a spaces message other than an application message.
+fn is_spaces_control_event(event: &Event) -> bool {
+    match &event.operation.header.extensions.variant {
+        ExtensionsVariantV1::Basic(_) => false,
+        ExtensionsVariantV1::Space(extensions) => {
+            !matches!(extensions.args, SpacesHeaderArgs::Application { .. })
+        }
+    }
 }
 
 /// Extracts the bodies from an event which are meant for the application layer.
@@ -191,7 +211,10 @@ fn process_spaces_events<M>(event: &Event, forward_events: &mut Vec<ForwardEvent
                 // Noop. Here we only handle system events.
             }
             p2panda_spaces::Event::Member(member) => {
-                forward_events.push(ForwardEvent::topic_stream(StreamEvent::Member(member.id())))
+                forward_events.push(ForwardEvent::topic_stream(StreamEvent::Member {
+                    id: member.id(),
+                    event: Box::new(event.clone()),
+                }))
             }
             p2panda_spaces::Event::Groups(group_event) => {
                 // Group events arriving on a spaces stream are forwarded to the system event
@@ -632,6 +655,27 @@ mod tests {
 
         // We expect spaces events to be forwarded to application layer.
         assert_eq!(forwarded.len(), 1);
+        assert!(!node.has_nacked_events().await, "was automatically acked");
+    }
+
+    #[tokio::test]
+    async fn always_ack_spaces_control_events_yielding_nothing() {
+        let node = TestNode::new().await;
+
+        let mut event = node.forge_space_event(None).await;
+        event.spaces = ProcessorStatus::Completed(SpacesResult::Processed { events: vec![] });
+
+        let forwarded = process_operation_out::<Vec<u8>>(
+            event,
+            node.topic,
+            StreamType::Space,
+            AckPolicy::Explicit,
+            &node.store,
+            &node.acked,
+        )
+        .await;
+
+        assert_eq!(forwarded.len(), 0, "not forwarded to application layer");
         assert!(!node.has_nacked_events().await, "was automatically acked");
     }
 

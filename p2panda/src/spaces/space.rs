@@ -24,7 +24,7 @@ use crate::spaces::repair::{RepairCommandError, RepairTask};
 use crate::spaces::types::{
     InnerPendingSpace, InnerSpace, InnerSpaceError, SpacesEvent, SpacesManagerError,
 };
-use crate::streams::{CloseError, StreamEvent, StreamPublisher, StreamSubscription};
+use crate::streams::{AckedError, CloseError, StreamEvent, StreamPublisher, StreamSubscription};
 
 /// Wraps topic stream and returns the pub/sub pair of a more specialised spaces stream.
 pub(crate) fn spaces_stream<M>(
@@ -211,7 +211,7 @@ where
 /// // Panda waits for penguin subscribe to space and send there Member message which is
 /// // needed before they can be added as a member.
 /// while let Some(event) = panda_rx.next().await {
-///     let StreamEvent::Member(member) = event else {
+///     let StreamEvent::Member { id: member, .. } = event else {
 ///         continue;
 ///     };
 ///
@@ -582,6 +582,15 @@ where
 /// Subscription to events arriving from a space.
 pub struct SpaceSubscription<M> {
     rx: StreamSubscription<M>,
+}
+
+impl<M> SpaceSubscription<M> {
+    /// Explicitly acknowledge operation.
+    ///
+    /// See [`StreamSubscription::ack`].
+    pub async fn ack(&self, id: Hash) -> Result<(), AckedError> {
+        self.rx.ack(id).await
+    }
 }
 
 impl<M> Stream for SpaceSubscription<M>

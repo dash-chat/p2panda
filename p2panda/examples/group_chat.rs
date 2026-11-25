@@ -190,7 +190,7 @@ fn spawn_event_handler(mut space_rx: SpaceSubscription<Message>) {
                     println!("MEMBERS: [{}]", members)
                 }
                 // Key bundle.
-                StreamEvent::Member(actor) => {
+                StreamEvent::Member { id: actor, .. } => {
                     println!("KEY BUNDLE RECEIVED: {}", actor)
                 }
                 _ => (),
