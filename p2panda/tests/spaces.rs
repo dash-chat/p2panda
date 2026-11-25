@@ -87,7 +87,7 @@ mod spaces_api {
         // Panda waits for penguin subscribe to space and send there Member message which is
         // needed before they can be added as a member.
         while let Some(event) = panda_rx.next().await {
-            let StreamEvent::Member(member) = event else {
+            let StreamEvent::Member { id: member, .. } = event else {
                 continue;
             };
 
@@ -435,7 +435,7 @@ mod spaces_api {
         }
 
         while let Some(event) = panda_rx.next().await {
-            if let StreamEvent::Member(..) = event {
+            if let StreamEvent::Member { .. } = event {
                 break;
             };
         }
@@ -1230,7 +1230,7 @@ mod members {
         let mut required_key_bundles = vec![node_c.id(), node_d.id()];
 
         while let Some(event) = node_a_rx.next().await {
-            let StreamEvent::Member(member_id) = event else {
+            let StreamEvent::Member { id: member_id, .. } = event else {
                 continue;
             };
 
@@ -1284,7 +1284,7 @@ mod members {
                         required_adds.retain(|id| &member_id != id);
                     }
                 }
-                StreamEvent::Member(member_id) => {
+                StreamEvent::Member { id: member_id, .. } => {
                     required_key_bundles.retain(|id| &member_id != id);
                 }
                 _ => continue,
@@ -1800,7 +1800,7 @@ mod messages {
 
         // Panda receives Penguin's key bundle.
         while let Some(event) = panda_rx.next().await {
-            if let StreamEvent::Member(member) = event {
+            if let StreamEvent::Member { id: member, .. } = event {
                 if penguin.id() == member {
                     break;
                 }

@@ -725,7 +725,13 @@ pub enum StreamEvent<M> {
     },
 
     /// Key bundle has been processed.
-    Member(VerifyingKey),
+    Member {
+        /// Member the key bundle belongs to.
+        id: VerifyingKey,
+
+        /// Processed event.
+        event: Box<Event>,
+    },
 }
 
 pub(crate) fn to_space_stream_event<M>(
